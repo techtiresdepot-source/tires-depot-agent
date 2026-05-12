@@ -3,7 +3,7 @@
 require('dotenv').config();
 const express = require('express');
 const crypto  = require('crypto');
-const { handleMessage } = require('./agent');
+const { handleMessage, getLeadsCSV } = require('./agent');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -130,6 +130,18 @@ app.post('/webhook', async (req, res) => {
   } catch (err) {
     console.error('Handler error:', err);
   }
+});
+
+// ── Leads CSV download ────────────────────────────────────────────────────────
+// Access: https://your-url.railway.app/leads?token=tires_depot_webhook_2024
+app.get('/leads', (req, res) => {
+  if (req.query.token !== process.env.META_VERIFY_TOKEN) {
+    return res.status(401).send('Unauthorized');
+  }
+  const csv = getLeadsCSV();
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="leads-${new Date().toISOString().slice(0,10)}.csv"`);
+  res.send(csv);
 });
 
 // ── Health check ─────────────────────────────────────────────────────────────
