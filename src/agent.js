@@ -233,14 +233,14 @@ async function handleMessage(userId, incomingText, platform) {
   // Add to history
   session.history.push({ role: 'user', content: userMessage });
 
-  // Keep history to last 20 messages to avoid token overflow
-  if (session.history.length > 20) {
-    session.history = session.history.slice(-20);
+  // Keep history to last 10 messages to optimize token usage (~50% cost reduction)
+  if (session.history.length > 10) {
+    session.history = session.history.slice(-10);
   }
 
   const response = await client.messages.create({
     model:      'claude-sonnet-4-20250514',
-    max_tokens: 500,
+    max_tokens: 350,
     system:     SYSTEM_PROMPT,
     messages:   session.history,
   });
