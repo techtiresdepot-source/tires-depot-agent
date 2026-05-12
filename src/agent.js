@@ -328,7 +328,7 @@ PASO 2 — TELÉFONO (solo si [NEEDS_PHONE]):
 
 PASO 3 — BÚSQUEDA DE LLANTAS:
 - Si no tienes tamaño → pregúntalo
-- Si tienes tamaño pero no posición (steer/traction/trailer/all position) → pregunta posición
+- Si tienes tamaño pero no posición → pregunta posición SOLO si es llanta de camión (rin 22.5 o mayor). Para llantas de automóvil (rin 16, 17, 18, etc.) NO preguntes la posición, ve directo a mostrar resultados.
 - Con tamaño + posición → muestra TODOS los resultados de [INVENTORY DATA] en lista numerada
 - Si piden "la más económica" → destaca la #1 (lista ordenada precio asc)
 - Si mencionan marca → filtra por esa marca
@@ -446,7 +446,8 @@ async function handleMessage(userId, incomingText, platform) {
         const list = tires.map((t,i) =>
           `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock | Posición: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c`
         ).join('\n');
-        const posLabel   = session.position ? ` | Posición: ${session.position}` : ' | (sin filtro posición aún)';
+        const isTruck    = getRimSize(session.size) >= 22.5;
+        const posLabel   = isTruck ? (session.position ? ` | Posición: ${session.position}` : ' | (sin filtro posición — ES CAMIÓN, pregunta posición)') : ' | (automóvil — posición no aplica)';
         const brandLabel = session.brand    ? ` | Marca: ${session.brand}` : '';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.size}${posLabel}${brandLabel}${cheapLabel}:\n${list}]`;
 
