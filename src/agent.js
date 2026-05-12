@@ -11,7 +11,8 @@ const BIZ = {
   mountStandard: 25,
   mountLarge: 35,
   largeSizePrefixes: ['385', '425'],
-  valve: 5,
+  valve: 5,           // optional — only if stem is worn/oxidized
+  disposal: 10,        // optional — tire disposal when mounting with us
   mountDiscount: 5,
   freeDeliveryZone: 'Miami-Dade County',
   phone: '+1 (786) 518-5105',
@@ -173,14 +174,20 @@ function getMountCost(size) {
   return BIZ.largeSizePrefixes.includes(prefix) ? BIZ.mountLarge : BIZ.mountStandard;
 }
 
-function calcTotal(tire, qty, withMount) {
-  const tireT = tire.price * qty;
-  const mc    = getMountCost(tire.size) * qty;
-  const vc    = BIZ.valve * qty;
-  const disc  = withMount ? BIZ.mountDiscount * qty : 0;
-  const sub   = tireT + (withMount ? mc + vc - disc : 0);
-  const tax   = sub * BIZ.taxRate;
-  return { tireT, mc, vc, disc, sub, tax, grand: sub + tax };
+function calcTotal(tire, qty, withMount, withValve=false, withDisposal=false) {
+  const tireT    = tire.price * qty;
+  const mc       = withMount            ? getMountCost(tire.size) * qty : 0;
+  const vc       = withValve            ? BIZ.valve * qty : 0;
+  const disposal = withDisposal && withMount ? BIZ.disposal * qty : 0;
+  const disc     = withMount            ? BIZ.mountDiscount * qty : 0;
+  // Discount applies to tire price (not mount)
+  // Tax applies to (tires - discount) + valves
+  // Mount and disposal have no tax
+  const tireTAfterDisc = tireT - disc;
+  const taxBase        = tireTAfterDisc + vc;
+  const tax            = taxBase * BIZ.taxRate;
+  const grand          = tireTAfterDisc + vc + tax + mc + disposal;
+  return { tireT, mc, vc, disposal, disc, tireTAfterDisc, tax, grand };
 }
 
 function formatQuote(tire, qty, withMount) {
@@ -192,9 +199,10 @@ function formatQuote(tire, qty, withMount) {
     `   ${tire.name}`,
     `   Llantas: ${fmt(c.tireT)}`,
   ];
+  // Válvula se cobra siempre
+  lines.push(`   Válvulas ($5/c): ${fmt(c.vc)}`);
   if (withMount) {
     lines.push(`   Monte (${ml}): ${fmt(c.mc)}`);
-    lines.push(`   Válvulas ($5/c): ${fmt(c.vc)}`);
     lines.push(`   Dto. por montar con nosotros: -${fmt(c.disc)}`);
   }
   lines.push(`   Tax FL (7%): ${fmt(c.tax)}`);
@@ -258,10 +266,11 @@ DATOS DEL NEGOCIO:
 - Free delivery en todo ${BIZ.freeDeliveryZone}
 
 REGLAS DE PRECIOS:
-- Tax FL: 7% sobre todo
-- Monte: $${BIZ.mountStandard}/llanta estándar | $${BIZ.mountLarge}/llanta para medidas 385 y 425
-- Válvula: $${BIZ.valve}/llanta
-- Descuento: -$${BIZ.mountDiscount}/llanta al montar con nosotros (antes del tax)
+- Tax FL: 7% sobre llantas y válvulas. El monte, descuento y disposición de basura NO llevan tax.
+- Monte: ${BIZ.mountStandard}/llanta estándar | ${BIZ.mountLarge}/llanta medidas 385 y 425
+- Válvula: ${BIZ.valve}/llanta — OPCIONAL, solo si el rin está oxidado o desgastado. El cliente decide si la necesita.
+- Disposición de basura: ${BIZ.disposal}/llanta — OPCIONAL, solo si montan con nosotros y quieren que nos encarguemos de las llantas viejas
+- Descuento: -${BIZ.mountDiscount}/llanta al montar con nosotros — se descuenta del precio de la llanta, por lo que también reduce la base del tax
 - Free delivery en Miami-Dade. Otros condados tienen costo adicional.
 
 FINANCIACIÓN:
@@ -281,7 +290,10 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
 - Con tamaño + posición → muestra TODOS los resultados de [INVENTORY DATA] en lista numerada
 - Si piden "la más económica" → destaca la #1 (lista ordenada precio asc)
 - Si mencionan marca → filtra por esa marca
-- Cliente elige llanta → pregunta cuántas → muestra [QUOTE]
+- Cliente elige llanta → pregunta cuántas → pregunta si necesita válvulas (rin oxidado/desgastado) → si van a montar con nosotros pregunta si quieren disposición de llantas viejas ($10/c) → muestra [QUOTE]
+
+MANEJO DE PREGUNTAS FUERA DEL FLUJO (crítico):
+- Si el cliente pregunta algo general (monte, válvula, delivery, financiación, ubicación) mientras ya hay una búsqueda activa → responde brevemente y LUEGO retoma: si ya mostraste opciones di "Retomando tu búsqueda, ¿cuál de estas opciones prefieres?" y repite la lista. NUNCA pidas de nuevo la medida o posición si ya las tienes.
 
 PASO 4 — OFERTA DE EMAIL (solo si [OFFER_EMAIL]):
 - Después de mostrar cotización o resultados, si ves [OFFER_EMAIL] → invita al cliente a registrar su email para recibir la *Llanta de la Semana* con precios especiales. Hazlo de forma breve y no invasiva. Si dice que no → acepta y continúa normalmente.
@@ -421,7 +433,9 @@ async function handleMessage(userId, incomingText, platform) {
       if (idx >= 0 && idx < session.tires.length) tire = session.tires[idx];
     }
     const qty   = qtyMatch ? parseInt(qtyMatch[1]) : 4;
-    const mount = !/sin monte|without mount|no mount|solo llant/i.test(text);
+    const mount    = !/sin monte|without mount|no mount|solo llant/i.test(text);
+    const valve    = /válvula|valvula|valve|stem/i.test(text);
+    const disposal = /basura|disposal|dispos|llantas viejas|old tires/i.test(text);
     if (qty >= 1 && qty <= 24) {
       quoteContext = `\n\n[QUOTE:\n${formatQuote(tire, qty, mount)}]`;
     }
