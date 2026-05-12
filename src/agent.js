@@ -291,7 +291,7 @@ N. *Marca* — $precio/llanta | stock unidades | Posición | Monte $X/llanta
 Después pregunta cuántas llantas necesita. Menciona free delivery Miami-Dade y -$5 por montar con nosotros.
 
 ESTILO:
-- Responde en el idioma del cliente (español o inglés)
+- Responde SIEMPRE en español por defecto. Solo cambia al inglés si el cliente escribe claramente en inglés.
 - Mensajes cortos — formato WhatsApp/Instagram/Messenger
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
 - Sin datos → invita a llamar al ${BIZ.phone}
