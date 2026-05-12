@@ -278,8 +278,8 @@ ${FINANCE_OPTIONS.map(f => `- ${f.name}: ${f.note}`).join('\n')}
 
 FLUJO DE CONVERSACIÓN — sigue este orden estricto:
 
-PASO 1 — SALUDO Y NOMBRE:
-- Si no tienes [CUSTOMER NAME] → pide el nombre amigablemente al inicio
+PASO 1 — SALUDO Y NOMBRE (SIEMPRE PRIMERO):
+- Si no ves [CUSTOMER NAME] en el contexto → el PRIMER mensaje que envíes SIEMPRE debe ser un saludo de bienvenida a Tires Depot y pedir el nombre. No preguntes por llantas hasta tener el nombre.
 
 PASO 2 — TELÉFONO (solo si [NEEDS_PHONE]):
 - Si ves [NEEDS_PHONE] en el contexto → pide el número de teléfono antes de continuar
@@ -358,6 +358,10 @@ async function handleMessage(userId, incomingText, platform) {
   // ── Detect tire search params ─────────────────────────────────────────────
   const sizeMatch = text.match(/(\d{2,3}[\/\\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*|\d{2}[rR]\d{2}\.?\d*)/i);
   if (sizeMatch) { session.size = sizeMatch[0]; session.step = 'searching'; }
+  // If no name yet, also store size for later but keep step as name
+  if (!session.name && text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)) {
+    session.size = text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)[0];
+  }
 
   const pos = normalizePosition(text);
   if (pos) session.position = pos;
