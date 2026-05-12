@@ -194,12 +194,26 @@ function filterTires(size, position, brand) {
   return tires.sort((a,b) => a.price - b.price);
 }
 
+function getRimSize(size) {
+  // Extract rim diameter from size string: 11R22.5 → 22.5, 215/60R16 → 16
+  const m = (size||'').match(/[Rr](\d+\.?\d*)/);
+  return m ? parseFloat(m[1]) : 0;
+}
+
+function offersMounting(size) {
+  // Only offer mounting for rim size 22.5 or larger (truck tires)
+  return getRimSize(size) >= 22.5;
+}
+
 function getMountCost(size) {
+  if (!offersMounting(size)) return 0;
   const prefix = (size||'').replace(/\D.*/,'').substring(0,3);
   return BIZ.largeSizePrefixes.includes(prefix) ? BIZ.mountLarge : BIZ.mountStandard;
 }
 
 function calcTotal(tire, qty, withMount, withValve=false, withDisposal=false) {
+  // Override: no mounting service for rims smaller than 22.5
+  if (!offersMounting(tire.size)) { withMount = false; withDisposal = false; }
   const tireT    = tire.price * qty;
   const mc       = withMount            ? getMountCost(tire.size) * qty : 0;
   const vc       = withValve            ? BIZ.valve * qty : 0;
