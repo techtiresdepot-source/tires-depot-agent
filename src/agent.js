@@ -13,13 +13,15 @@ const BIZ = {
   largeSizePrefixes: ['385', '425'],
   valve: 5,           // optional — only if stem is worn/oxidized
   disposal: 10,        // optional — tire disposal when mounting with us
+  creditSurcharge: 0.03, // 3% surcharge for credit card payments
+  cashDiscount: false,   // no cash discount
   mountDiscount: 5,
   freeDeliveryZone: 'Miami-Dade County',
   phone: '+1 (786) 518-5105',
   address: '12301 NW 116th Ave, Suite 106, Medley FL 33178',
   email: 'info@tires-depot.com',
   url: 'https://tires-depot.com/shop/',
-  hours: 'Mon–Fri 8am–6pm | Sat 9am–3pm',
+  hours: 'Lun–Vie 9am–5pm | Sáb 9am–1pm',
 };
 
 const FINANCE_OPTIONS = [
@@ -112,9 +114,9 @@ async function fetchAllInventory() {
     price:    parseFloat(p.price) || 0,
     stock:    p.stock_quantity ?? 0,
     inStock:  p.stock_status === 'instock',
-    size:     attr(p,'tamaño') || attr(p,'size') || sizeFromName(p.name),
-    brand:    attr(p,'marca')  || attr(p,'brand') || brandFromName(p.name),
-    position: attr(p,'posicion') || attr(p,'position') || posFromName(p.name),
+    size:     attr(p,'tamaño') || attr(p,'tamano') || attr(p,'size') || sizeFromName(p.name),
+    brand:    attr(p,'marca') || brandFromName(p.name),
+    position: attr(p,'position') || posFromName(p.name),
     type:     p.categories?.some(c => c.slug.includes('camion') || c.slug.includes('truck')) ? 'truck' : 'passenger',
   })).filter(p => p.inStock && p.price > 0);
   cache.ts = Date.now();
@@ -122,12 +124,19 @@ async function fetchAllInventory() {
 }
 
 function attr(p, name) {
-  const a = p.attributes?.find(x => x.name.toLowerCase().includes(name));
+  // Match attribute name ignoring accents, case and spaces
+  const normalize = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+  const target = normalize(name);
+  const a = p.attributes?.find(x => normalize(x.name).includes(target) || normalize(x.slug||'').includes(target));
   return a?.options?.[0] || null;
 }
 function sizeFromName(n) {
-  const m = n.match(/(\d{2,3}[\/R]\d{2}[\d.]*\w*|\d{2}R\d{2}\.?\d*)/i);
-  return m ? m[0].toUpperCase() : null;
+  // Last resort: extract size from product name when attribute not present
+  // Handles: 215/60R16, 215-60R16, 11R22.5
+  const m = n.match(/(\d{2,3}[-\/]\d{2,3}[-\/R]\d{2}[\w.]*|\d{2}R\d{2}\.?\d*)/i);
+  return m ? m[0].replace(/(\d{2,3})-(\d{2,3})-(\d{2})/i, '$1/$2R$3')
+               .replace(/(\d{2,3}\/\d{2,3})\/(\d{2})/i, '$1R$2')
+               .toUpperCase() : null;
 }
 function brandFromName(n) {
   const brands = ['Royal Black','Dynastone','Falken','Firestone','Pirelli','Continental','Yokohama',
@@ -144,27 +153,43 @@ function posFromName(n) {
   return '';
 }
 
+function normalizeSize(s) {
+  // First fix slash-only format: 235/85/16 → 235/85R16
+  let v = (s||'').toUpperCase()
+    .replace(/(\d{2,3})[\/\-](\d{2,3})[\/](\d{2})/g, '$1/$2R$3'); // 235/85/16 → 235/85R16
+  // Then strip all non-alphanumeric
+  return v.replace(/[^A-Z0-9]/g,'');
+}
+
 function filterTires(size, position, brand) {
   let tires = cache.data || [];
   if (size) {
-    const q = size.toLowerCase().replace(/[^a-z0-9]/g,'');
+    const q = normalizeSize(size);
     tires = tires.filter(p => {
-      const s  = (p.size||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-      const nm = (p.name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-      return s===q || s.includes(q) || q.includes(s.substring(0,6)) || nm.includes(q);
+      // Primary: compare against WooCommerce size attribute (most reliable)
+      const attrSize = normalizeSize(p.size);
+      // Secondary: search in full product name (fallback)
+      const nm = normalizeSize(p.name);
+      return attrSize === q || nm.includes(q);
     });
   }
   if (position) {
+    // Use WC position attribute as primary, fallback to name keywords
     const kws = POSITION_KEYWORDS[position] || [position];
     tires = tires.filter(p => {
-      const pp = (p.position||'').toLowerCase();
+      const pp = (p.position||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
       const pn = (p.name||'').toLowerCase();
       return kws.some(k => pp.includes(k) || pn.includes(k));
     });
   }
   if (brand) {
-    const b = brand.toLowerCase();
-    tires = tires.filter(p => (p.brand||'').toLowerCase().includes(b) || (p.name||'').toLowerCase().includes(b));
+    // Use WC marca attribute as primary, fallback to name
+    const b = brand.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+    tires = tires.filter(p => {
+      const pb = (p.brand||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+      const pn = (p.name||'').toLowerCase();
+      return pb.includes(b) || pn.includes(b.toLowerCase());
+    });
   }
   return tires.sort((a,b) => a.price - b.price);
 }
@@ -272,6 +297,9 @@ REGLAS DE PRECIOS:
 - Disposición de basura: ${BIZ.disposal}/llanta — OPCIONAL, solo si montan con nosotros y quieren que nos encarguemos de las llantas viejas
 - Descuento: -${BIZ.mountDiscount}/llanta al montar con nosotros — se descuenta del precio de la llanta, por lo que también reduce la base del tax
 - Free delivery en Miami-Dade. Otros condados tienen costo adicional.
+- Pago en efectivo (cash): precio normal, sin descuento
+- Pago con tarjeta de crédito: recargo del 3% sobre el total
+- NO hay descuentos por pagar en efectivo
 
 FINANCIACIÓN:
 ${FINANCE_OPTIONS.map(f => `- ${f.name}: ${f.note}`).join('\n')}
@@ -356,8 +384,12 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   // ── Detect tire search params ─────────────────────────────────────────────
-  const sizeMatch = text.match(/(\d{2,3}[\/\\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*|\d{2}[rR]\d{2}\.?\d*)/i);
-  if (sizeMatch) { session.size = sizeMatch[0]; session.step = 'searching'; }
+  const sizeMatch = text.match(/(\d{2,3}[\/]\d{2,3}[\/rR]\d{2}[\w.]*|\d{2,3}[\/\\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*|\d{2}[rR]\d{2}\.?\d*)/i);
+  if (sizeMatch) {
+    // Normalize 235/85/16 → 235/85R16
+    session.size = sizeMatch[0].replace(/(\d{2,3}\/\d{2,3})\/(?!R)(\d{2})/i, '\$1R\$2');
+    session.step = 'searching';
+  }
   // If no name yet, also store size for later but keep step as name
   if (!session.name && text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)) {
     session.size = text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)[0];
