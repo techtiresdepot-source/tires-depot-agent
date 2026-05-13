@@ -2,6 +2,7 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const fs        = require('fs');
+const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -86,6 +87,71 @@ function updateLeadEmail(phone, email) {
     }
   } catch (e) {
     console.error('Lead email update error:', e.message);
+  }
+}
+
+// ── Google Sheets conversation logger ───────────────────────────────────────
+const SHEET_ID  = process.env.GOOGLE_SHEET_ID;
+const SHEET_TAB = 'Conversaciones';
+
+let sheetsClient = null;
+
+async function getSheetsClient() {
+  if (sheetsClient) return sheetsClient;
+  const auth = new google.auth.GoogleAuth({
+    credentials: {
+      client_email: process.env.GOOGLE_CLIENT_EMAIL,
+      private_key:  (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    },
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+  sheetsClient = google.sheets({ version: 'v4', auth });
+  return sheetsClient;
+}
+
+async function ensureSheetHeaders() {
+  try {
+    const sheets = await getSheetsClient();
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `${SHEET_TAB}!A1:G1`,
+    });
+    if (!res.data.values || res.data.values.length === 0) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID,
+        range: `${SHEET_TAB}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [['fecha','canal','telefono','nombre','mensaje_cliente','respuesta_agente']] },
+      });
+    }
+  } catch (e) {
+    console.error('Sheet header error:', e.message);
+  }
+}
+
+// Initialize headers on startup
+ensureSheetHeaders().catch(() => {});
+
+async function logConversation({ platform, phone, name, userMsg, agentReply }) {
+  try {
+    const sheets = await getSheetsClient();
+    const row = [
+      new Date().toISOString(),
+      platform || '',
+      phone    || '',
+      name     || '',
+      (userMsg    || '').substring(0, 500),
+      (agentReply || '').substring(0, 500),
+    ];
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SHEET_ID,
+      range: `${SHEET_TAB}!A:F`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [row] },
+    });
+  } catch (e) {
+    console.error('Sheet log error:', e.message);
   }
 }
 
@@ -521,6 +587,15 @@ async function handleMessage(userId, incomingText, platform) {
 
   const reply = response.content[0].text;
   session.history.push({ role:'assistant', content: reply });
+
+  // Log to Google Sheets (non-blocking)
+  logConversation({
+    platform,
+    phone:      session.phone || userId,
+    name:       session.name  || '',
+    userMsg:    text,
+    agentReply: reply,
+  }).catch(() => {});
 
   return reply;
 }
