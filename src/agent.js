@@ -196,8 +196,9 @@ function filterTires(size, position, brand) {
 }
 
 function getRimSize(size) {
-  // Extract rim diameter from size string: 11R22.5 → 22.5, 215/60R16 → 16
-  const m = (size||'').match(/[Rr](\d+\.?\d*)/);
+  // Extract rim diameter — last number in size string
+  // Handles: 11R22.5, 215/60R16, 295/75/22.5, 295/75-22.5
+  const m = (size||'').match(/(?:[Rr\/\-])(\d+\.?\d*)$/);
   return m ? parseFloat(m[1]) : 0;
 }
 
@@ -343,7 +344,7 @@ PASO 4 — OFERTA DE EMAIL (solo si [OFFER_EMAIL]):
 
 FORMATO LISTA:
 N. *Marca* — $precio/llanta | stock unidades | Posición | Monte $X/llanta
-Después pregunta cuántas llantas necesita. Menciona free delivery Miami-Dade y -$5 por montar con nosotros.
+Después pregunta cuántas llantas necesita. Menciona free delivery en el área de Miami y -$5 por montar con nosotros.
 
 ESTILO:
 - Responde SIEMPRE en español por defecto. Solo cambia al inglés si el cliente escribe claramente en inglés.
