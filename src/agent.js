@@ -17,7 +17,8 @@ const BIZ = {
   cashDiscount: false,   // no cash discount
   mountDiscount: 5,
   freeDeliveryZone: 'área de Miami',
-  phone: '+1 (786) 518-5105',
+  phone: '+1 (786) 518-5105',  // internal only — do not share in chat
+  contactChannel: 'WhatsApp chat',
   address: '12301 NW 116th Ave, Suite 106, Medley FL 33178',
   email: 'info@tires-depot.com',
   url: 'https://tires-depot.com/shop/',
@@ -299,7 +300,7 @@ const SYSTEM_PROMPT = `Eres el asistente virtual de ventas de Tires Depot, tiend
 
 DATOS DEL NEGOCIO:
 - Dirección: ${BIZ.address}
-- Teléfono: ${BIZ.phone}
+- Contacto: solo por WhatsApp chat (este mismo número)
 - Email: ${BIZ.email}
 - Horario: ${BIZ.hours}
 - Free delivery en todo ${BIZ.freeDeliveryZone}
@@ -348,7 +349,7 @@ ESTILO:
 - Responde SIEMPRE en español por defecto. Solo cambia al inglés si el cliente escribe claramente en inglés.
 - Mensajes cortos — formato WhatsApp/Instagram/Messenger
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
-- Sin datos → invita a llamar al ${BIZ.phone}
+- Sin datos → invita a continuar la conversación por este mismo WhatsApp o a escribir al mismo número
 
 Tags de contexto:
 [CUSTOMER NAME: X] → ya tienes el nombre, no lo pidas
@@ -464,11 +465,11 @@ async function handleMessage(userId, incomingText, platform) {
           session.logged = true;
         }
       } else {
-        inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.size}${session.position?' pos:'+session.position:''}${session.brand?' marca:'+session.brand:''}. Sugiere llamar al ${BIZ.phone}.]`;
+        inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.size}${session.position?' pos:'+session.position:''}${session.brand?' marca:'+session.brand:''}. Invita a continuar por este mismo chat.]`;
       }
     } catch (err) {
       console.error('Inventory fetch error:', err.message);
-      inventoryContext = `\n\n[INVENTORY DATA: Error al obtener inventario. Invita a llamar al ${BIZ.phone}.]`;
+      inventoryContext = `\n\n[INVENTORY DATA: Error al obtener inventario. Invita a continuar por este mismo chat.]`;
     }
   }
 
