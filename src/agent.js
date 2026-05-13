@@ -16,7 +16,7 @@ const BIZ = {
   creditSurcharge: 0.03, // 3% surcharge for credit card payments
   cashDiscount: false,   // no cash discount
   mountDiscount: 5,
-  freeDeliveryZone: 'Miami-Dade County',
+  freeDeliveryZone: 'área de Miami',
   phone: '+1 (786) 518-5105',
   address: '12301 NW 116th Ave, Suite 106, Medley FL 33178',
   email: 'info@tires-depot.com',
@@ -247,7 +247,7 @@ function formatQuote(tire, qty, withMount) {
   lines.push(`   Tax FL (7%): ${fmt(c.tax)}`);
   lines.push(`   ━━━━━━━━━━━━━━`);
   lines.push(`   *TOTAL: ${fmt(c.grand)}*`);
-  lines.push(`🚚 Free delivery — Miami-Dade`);
+  lines.push(`🚚 Free delivery — área de Miami`);
   return lines.join('\n');
 }
 
@@ -310,7 +310,7 @@ REGLAS DE PRECIOS:
 - Válvula: ${BIZ.valve}/llanta — OPCIONAL, solo si el rin está oxidado o desgastado. El cliente decide si la necesita.
 - Disposición de basura: ${BIZ.disposal}/llanta — OPCIONAL, solo si montan con nosotros y quieren que nos encarguemos de las llantas viejas
 - Descuento: -${BIZ.mountDiscount}/llanta al montar con nosotros — se descuenta del precio de la llanta, por lo que también reduce la base del tax
-- Free delivery en Miami-Dade. Otros condados tienen costo adicional.
+- Free delivery en el área de Miami. Otros condados tienen costo adicional.
 - Pago en efectivo (cash): precio normal, sin descuento
 - Pago con tarjeta de crédito: recargo del 3% sobre el total
 - NO hay descuentos por pagar en efectivo
@@ -445,7 +445,7 @@ async function handleMessage(userId, incomingText, platform) {
         const cheapLabel = cheapest ? ' — CLIENTE QUIERE LA MÁS ECONÓMICA, destaca la #1' : '';
         const isTruck    = getRimSize(session.size) >= 22.5;
         const posLabel   = isTruck ? (session.position ? ` | Posición: ${session.position}` : ' | (sin filtro posición — ES CAMIÓN, pregunta posición)') : ' | AUTOMÓVIL';
-        const mountNote  = isTruck ? '| Monte disponible' : '| SIN SERVICIO DE MONTE (rin menor a 22.5)';
+        const mountNote  = isTruck ? '| Monte disponible' : '| NO PRESTAMOS SERVICIO DE MONTE PARA ESTA MEDIDA — no decir que es gratis, decir que no ofrecemos instalación';
         const list = tires.map((t,i) =>
           `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruck ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
         ).join('\n');
