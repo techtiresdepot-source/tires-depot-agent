@@ -444,12 +444,13 @@ async function handleMessage(userId, incomingText, platform) {
       if (tires.length > 0) {
         const cheapLabel = cheapest ? ' — CLIENTE QUIERE LA MÁS ECONÓMICA, destaca la #1' : '';
         const list = tires.map((t,i) =>
-          `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock | Posición: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c`
+          `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruck ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
         ).join('\n');
         const isTruck    = getRimSize(session.size) >= 22.5;
-        const posLabel   = isTruck ? (session.position ? ` | Posición: ${session.position}` : ' | (sin filtro posición — ES CAMIÓN, pregunta posición)') : ' | (automóvil — posición no aplica)';
+        const posLabel   = isTruck ? (session.position ? ` | Posición: ${session.position}` : ' | (sin filtro posición — ES CAMIÓN, pregunta posición)') : ' | AUTOMÓVIL';
+        const mountNote  = isTruck ? '| Monte disponible' : '| SIN SERVICIO DE MONTE (rin menor a 22.5)';
         const brandLabel = session.brand    ? ` | Marca: ${session.brand}` : '';
-        inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.size}${posLabel}${brandLabel}${cheapLabel}:\n${list}]`;
+        inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.size}${posLabel}${brandLabel} ${mountNote}${cheapLabel}:\n${list}]`;
 
         // Log lead once we have name + search query
         if (!session.logged && session.name) {
