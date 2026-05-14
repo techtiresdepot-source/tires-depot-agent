@@ -237,7 +237,7 @@ function normalizeSize(s) {
   return v.replace(/[^A-Z0-9]/g,'');
 }
 
-function filterTires(size, position, brand) {
+function filterTires(size, position, brand, origin) {
   let tires = cache.data || [];
   if (size) {
     const q = normalizeSize(size);
@@ -410,6 +410,7 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
 - Con tamaño + posición → muestra TODOS los resultados de [INVENTORY DATA] en lista numerada
 - Si piden "la más económica" → destaca la #1 (lista ordenada precio asc)
 - Si mencionan marca → filtra por esa marca
+- Si mencionan origen (americanas, vietnamitas, brasileñas, japonesas, indias, camboyanas, etc.) → filtra por el país en el nombre del producto
 - Cliente elige llanta → pregunta cuántas → pregunta si necesita válvulas (rin oxidado/desgastado) → si van a montar con nosotros pregunta si quieren disposición de llantas viejas ($10/c) → muestra [QUOTE]
 
 MANEJO DE PREGUNTAS FUERA DEL FLUJO (crítico):
@@ -499,6 +500,20 @@ async function handleMessage(userId, incomingText, platform) {
 
   const cheapest = /económic|econom|cheapest|más barat|barata|menor precio|precio.?más.?bajo/i.test(text);
 
+  // Detect origin filter from customer text
+  const ORIGIN_MAP = [
+    { keywords: /american[ao]s?|\bUSA\b|estados unidos/i,  value: 'INDIAN' },
+    { keywords: /indian[ao]s?|\bINDIA\b/i,                 value: 'INDIAN' },
+    { keywords: /vietnamit[ao]s?|vietnam/i,                  value: 'VIETNAM' },
+    { keywords: /camboyanas?|cambodia|camboya/i,              value: 'CAMBOIA' },
+    { keywords: /brasileñ[ao]s?|brasil|brazil/i,             value: 'BRASIL' },
+    { keywords: /japonesas?|japan|japon/i,                   value: 'JAPONESA' },
+    { keywords: /chinas?|china/i,                            value: 'CHINA' },
+    { keywords: /coreanas?|korea|corea/i,                    value: 'KOREA' },
+  ];
+  const originMatch = ORIGIN_MAP.find(o => o.keywords.test(text));
+  if (originMatch) session.origin = originMatch.value;
+
   // ── Build context tags ────────────────────────────────────────────────────
   let contactContext = '';
   if (session.name)  contactContext += `\n[CUSTOMER NAME: ${session.name}]`;
@@ -516,7 +531,7 @@ async function handleMessage(userId, incomingText, platform) {
   if (session.size) {
     try {
       await fetchAllInventory();
-      const tires = filterTires(session.size, session.position, session.brand);
+      const tires = filterTires(session.size, session.position, session.brand, session.origin);
       session.tires = tires;
 
       if (tires.length > 0) {
@@ -527,8 +542,9 @@ async function handleMessage(userId, incomingText, platform) {
         const list = tires.map((t,i) =>
           `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruck ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
         ).join('\n');
-        const brandLabel = session.brand    ? ` | Marca: ${session.brand}` : '';
-        inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.size}${posLabel}${brandLabel} ${mountNote}${cheapLabel}:\n${list}]`;
+        const brandLabel  = session.brand  ? ` | Marca: ${session.brand}` : '';
+        const originLabel = session.origin ? ` | Origen: ${session.origin}` : '';
+        inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
 
         // Log lead once we have name + search query
         if (!session.logged && session.name) {
