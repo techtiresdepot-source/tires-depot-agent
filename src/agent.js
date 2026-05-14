@@ -324,7 +324,8 @@ function formatQuote(tire, qty, withMount) {
   lines.push(`   Tax FL (7%): ${fmt(c.tax)}`);
   lines.push(`   ━━━━━━━━━━━━━━`);
   lines.push(`   *TOTAL: ${fmt(c.grand)}*`);
-  lines.push(`🚚 Free delivery — área de Miami`);
+  if (!withMount) lines.push(`🚚 Free delivery — área de Miami`);
+  else lines.push(`📍 Instalación en tienda: 12301 NW 116th Ave, Suite 106, Medley FL`);
   return lines.join('\n');
 }
 
@@ -419,7 +420,7 @@ PASO 4 — OFERTA DE EMAIL (solo si [OFFER_EMAIL]):
 
 FORMATO LISTA:
 N. *Marca* — $precio/llanta | stock unidades | Posición | Monte $X/llanta
-Después pregunta cuántas llantas necesita. Menciona free delivery en el área de Miami y -$5 por montar con nosotros.
+Después pregunta cuántas llantas necesita y si va a montar con nosotros o prefiere delivery. Son opciones EXCLUYENTES: si monta con nosotros (trae el vehículo a la tienda) → descuento -$5/llanta, sin delivery. Si no monta → free delivery en el área de Miami, sin descuento.
 
 ESTILO:
 - Responde SIEMPRE en español por defecto. Solo cambia al inglés si el cliente escribe claramente en inglés.
