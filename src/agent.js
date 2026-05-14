@@ -34,9 +34,18 @@ const FINANCE_OPTIONS = [
 ];
 
 const POSITION_KEYWORDS = {
-  steer:    ['steer','direccion','dirección','delantera','front','steering','eje delantero'],
-  traction: ['traction','traccion','tracción','drive','motriz','trasera','rear','eje trasero'],
-  trailer:  ['trailer','remolque','all position','all-position','todas posiciones','todas'],
+  steer:        ['steer','direccion','dirección','delantera','front','steering','eje delantero'],
+  traction:     ['traction','traccion','tracción','drive','motriz','trasera','rear','eje trasero'],
+  trailer:      ['trailer','remolque','todas posiciones'],
+  'all position': ['all position','all-position','todas','multi','universal'],
+};
+
+// Map session position key → exact WooCommerce attribute value
+const POSITION_WC_VALUE = {
+  steer:          'Steer',
+  traction:       'Traction',
+  trailer:        'Trailer',
+  'all position': 'All Position',
 };
 
 function normalizePosition(text) {
@@ -181,7 +190,7 @@ async function fetchAllInventory() {
     price:    parseFloat(p.price) || 0,
     stock:    p.stock_quantity ?? 0,
     inStock:  p.stock_status === 'instock',
-    size:     attr(p,'tamaño') || attr(p,'tamano') || attr(p,'size') || sizeFromName(p.name),
+    size:     attr(p,'tamano') || attr(p,'tamaño') || sizeFromName(p.name),
     brand:    attr(p,'marca') || brandFromName(p.name),
     position: attr(p,'position') || posFromName(p.name),
     type:     p.categories?.some(c => c.slug.includes('camion') || c.slug.includes('truck')) ? 'truck' : 'passenger',
@@ -396,7 +405,7 @@ PASO 2 — TELÉFONO (solo si [NEEDS_PHONE]):
 
 PASO 3 — BÚSQUEDA DE LLANTAS:
 - Si no tienes tamaño → pregúntalo
-- Si tienes tamaño pero no posición → pregunta posición SOLO si es llanta de camión (rin 22.5 o mayor). Para llantas de automóvil (rin 16, 17, 18, etc.) NO preguntes la posición, ve directo a mostrar resultados.
+- Si tienes tamaño pero no posición → pregunta posición SOLO si es llanta de camión (rin 22.5 o mayor). Los valores exactos son: Steer (delantera), Traction (tracción/trasera), Trailer, All Position. Para llantas de automóvil (rin 16, 17, 18, etc.) NO preguntes la posición.
 - Con tamaño + posición → muestra TODOS los resultados de [INVENTORY DATA] en lista numerada
 - Si piden "la más económica" → destaca la #1 (lista ordenada precio asc)
 - Si mencionan marca → filtra por esa marca
@@ -416,7 +425,7 @@ ESTILO:
 - Responde SIEMPRE en español por defecto. Solo cambia al inglés si el cliente escribe claramente en inglés.
 - Mensajes cortos — formato WhatsApp/Instagram/Messenger
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
-- Sin datos → invita a continuar la conversación por este mismo WhatsApp o a escribir al mismo número
+- Sin resultados en inventario → dilo claramente y pregunta si tiene otra medida o posición alternativa
 
 Tags de contexto:
 [CUSTOMER NAME: X] → ya tienes el nombre, no lo pidas
