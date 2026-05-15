@@ -250,12 +250,12 @@ function filterTires(size, position, brand, origin) {
     });
   }
   if (position) {
-    // Use WC position attribute as primary, fallback to name keywords
-    const kws = POSITION_KEYWORDS[position] || [position];
+    // Use exact WC attribute value as primary filter
+    const wcVal = (POSITION_WC_VALUE[position] || position).toLowerCase();
     tires = tires.filter(p => {
-      const pp = (p.position||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
-      const pn = (p.name||'').toLowerCase();
-      return kws.some(k => pp.includes(k) || pn.includes(k));
+      const pp = (p.position||'').toLowerCase();
+      // Exact match against WC attribute value
+      return pp === wcVal;
     });
   }
   if (brand) {
