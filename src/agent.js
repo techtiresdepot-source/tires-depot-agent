@@ -440,6 +440,7 @@ ESTILO:
 - Sin resultados → una línea corta y pregunta alternativa.
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
 - Si el cliente dice cuántas llantas de cada posición necesita (ej: "2 steer y 8 traction") → muestra primero los resultados de una posición y luego di que buscarás la otra. No preguntes confirmaciones innecesarias.
+- Cuando el cliente responda con un número después de ver una lista de opciones, interpreta ese número como la SELECCIÓN de esa opción (ej: responde "2" → elige la opción #2 de la lista), NO como cantidad. La cantidad ya se conoce del mensaje inicial.
 
 IMPORTANTE: Los tags [INVENTORY DATA:], [QUOTE:], [CUSTOMER NAME:], etc. son instrucciones internas — NUNCA los copies literalmente en tu respuesta al cliente. Usa su contenido para formular tu respuesta.
 
@@ -625,13 +626,26 @@ async function handleMessage(userId, incomingText, platform) {
 
   if (session.tires.length > 0 && (qtyMatch || wantsQuote)) {
     let tire = session.tires[0];
-    const pickMatch = text.match(/(?:número?|opción|#|^)\s*([1-9][0-9]?)(?:\s|$)/i);
+
+    // Detect selection: "2", "opción 2", "#2", "el 2", "la 2", brand name
+    const isJustNumber = /^\s*\d+\s*$/.test(text); // message is ONLY a number
+    const pickMatch = text.match(/(?:número?|opción|el|la|#)\s*([1-9][0-9]?)(?:\s|$)/i) ||
+                      (isJustNumber ? text.match(/(\d+)/) : null);
+
     if (pickMatch) {
       const idx = parseInt(pickMatch[1]) - 1;
       if (idx >= 0 && idx < session.tires.length) tire = session.tires[idx];
     }
+
+    // Also detect by brand name in text
+    const brandPick = session.tires.findIndex(t =>
+      t.brand && text.toLowerCase().includes(t.brand.toLowerCase())
+    );
+    if (brandPick >= 0) tire = session.tires[brandPick];
+
+    // If message is just a number, use it as selection not quantity
     const totalQty = Object.values(session.pendingQty||{}).reduce((a,b)=>a+b,0);
-    const qty = totalQty > 0 ? totalQty : (qtyMatch ? parseInt(qtyMatch[1]) : 4);
+    const qty = totalQty > 0 ? totalQty : (!isJustNumber && qtyMatch ? parseInt(qtyMatch[1]) : 4);
     const mount    = !/sin monte|without mount|no mount|solo llant/i.test(text);
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas|old tires/i.test(text);
