@@ -557,6 +557,7 @@ async function handleMessage(userId, incomingText, platform) {
   if (session.size) {
     try {
       await fetchAllInventory();
+      console.log(`[FILTER] size=${session.size} pos=${session.position} origin=${session.origin} brand=${session.brand}`);
       const tires = filterTires(session.size, session.position, session.brand, session.origin);
       session.tires = tires;
 
