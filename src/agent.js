@@ -267,6 +267,11 @@ function filterTires(size, position, brand, origin) {
       return pb.includes(b) || pn.includes(b.toLowerCase());
     });
   }
+  if (origin) {
+    const o = origin.toUpperCase();
+    tires = tires.filter(p => (p.name||'').toUpperCase().includes(o));
+  }
+
   return tires.sort((a,b) => a.price - b.price);
 }
 
@@ -502,8 +507,8 @@ async function handleMessage(userId, incomingText, platform) {
 
   // Detect origin filter from customer text
   const ORIGIN_MAP = [
-    { keywords: /american[ao]s?|\bUSA\b|estados unidos/i,  value: 'INDIAN' },
-    { keywords: /indian[ao]s?|\bINDIA\b/i,                 value: 'INDIAN' },
+    { keywords: /american[ao]s?|\bUSA\b|estados unidos/i,  value: 'USA' },
+    { keywords: /indian[ao]s?|\bINDIA\b/i,                 value: 'INDIA' },
     { keywords: /vietnamit[ao]s?|vietnam/i,                  value: 'VIETNAM' },
     { keywords: /camboyanas?|cambodia|camboya/i,              value: 'CAMBOIA' },
     { keywords: /brasileñ[ao]s?|brasil|brazil/i,             value: 'BRASIL' },
