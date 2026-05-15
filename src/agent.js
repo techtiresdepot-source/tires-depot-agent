@@ -429,10 +429,12 @@ N. *Marca* — $precio/llanta | stock unidades | Posición | Monte $X/llanta
 Después pregunta cuántas llantas necesita y si va a montar con nosotros o prefiere delivery. Son opciones EXCLUYENTES: si monta con nosotros (trae el vehículo a la tienda) → descuento -$5/llanta, sin delivery. Si no monta → free delivery en el área de Miami, sin descuento.
 
 ESTILO:
-- Responde SIEMPRE en español por defecto. Solo cambia al inglés si el cliente escribe claramente en inglés.
-- Mensajes cortos — formato WhatsApp/Instagram/Messenger
+- Español por defecto. Inglés solo si el cliente escribe en inglés.
+- ULTRA CORTO. Frases sueltas. Máximo 2 líneas. Sin cortesías, sin introducciones, sin despedidas.
+- Si tienes [INVENTORY DATA] → muéstralo directo, sin preámbulo.
+- Sin resultados → una línea corta y pregunta alternativa.
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
-- Sin resultados en inventario → dilo claramente y pregunta si tiene otra medida o posición alternativa
+- Si el cliente dice cuántas llantas de cada posición necesita (ej: "2 steer y 8 traction") → muestra primero los resultados de una posición y luego di que buscarás la otra. No preguntes confirmaciones innecesarias.
 
 Tags de contexto:
 [CUSTOMER NAME: X] → ya tienes el nombre, no lo pidas
@@ -550,6 +552,9 @@ async function handleMessage(userId, incomingText, platform) {
         const brandLabel  = session.brand  ? ` | Marca: ${session.brand}` : '';
         const originLabel = session.origin ? ` | Origen: ${session.origin}` : '';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
+
+        // Reset origin filter after use — only applies to the specific request
+        session.origin = null;
 
         // Log lead once we have name + search query
         if (!session.logged && session.name) {
