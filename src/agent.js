@@ -553,8 +553,9 @@ async function handleMessage(userId, incomingText, platform) {
         const originLabel = session.origin ? ` | Origen: ${session.origin}` : '';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
 
-        // Reset origin filter after use — only applies to the specific request
-        session.origin = null;
+        // Reset position and origin after use — each search is independent
+        session.position = null;
+        session.origin   = null;
 
         // Log lead once we have name + search query
         if (!session.logged && session.name) {
