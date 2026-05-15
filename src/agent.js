@@ -415,8 +415,9 @@ PASO 2 — TELÉFONO (solo si [NEEDS_PHONE]):
 
 PASO 3 — BÚSQUEDA DE LLANTAS:
 - Si no tienes tamaño → pregúntalo
-- Si tienes tamaño pero no posición → pregunta posición SOLO si es llanta de camión (rin 22.5 o mayor). Los valores exactos son: Steer (delantera), Traction (tracción/trasera), Trailer, All Position. Para llantas de automóvil (rin 16, 17, 18, etc.) NO preguntes la posición.
-- Si el cliente pide varias posiciones en un mensaje (ej: "2 delantera y 8 trasera") → el sistema mostrará primero los resultados de la primera posición en [INVENTORY DATA], luego automáticamente buscará la siguiente. Muestra cada una claramente etiquetada.
+- Si tienes tamaño pero no posición → pregunta posición SOLO si es llanta de camión (rin 22.5 o mayor). Las opciones son: Steer (delantera), Traction (tracción/drive), Trailer, All Position. Para autos NO preguntes posición.
+- Cuando el cliente diga 'para atrás' o 'traseras' sin especificar más → pregunta si es Traction o Trailer (son posiciones diferentes).
+- Si el cliente pide varias posiciones en un mensaje → muestra primero los resultados de la primera posición, luego busca la siguiente automáticamente.
 - Con tamaño + posición → muestra TODOS los resultados de [INVENTORY DATA] en lista numerada
 - Si piden "la más económica" → destaca la #1 (lista ordenada precio asc)
 - Si mencionan marca → filtra por esa marca
@@ -515,15 +516,15 @@ async function handleMessage(userId, incomingText, platform) {
   if (sizeMatch) {
     // Normalize 235/85/16 → 235/85R16
     const newSize = sizeMatch[0].replace(/(\d{2,3}\/\d{2,3})\/(?!R)(\d{2})/i, '\$1R\$2');
-    if (session.size && newSize !== session.size) {
-      session.origin = null; // Reset origin only when changing to a different size
+    if (session.current.size && newSize !== session.current.size) {
+      session.current.origin = null; // Reset origin only when changing to a different size
     }
-    session.size = newSize;
-    session.step = 'searching';
+    session.current.size = newSize;
+    session.current.step = 'searching';
   }
   // If no name yet, also store size for later but keep step as name
   if (!session.name && text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)) {
-    session.size = text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)[0];
+    session.current.size = text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)[0];
   }
 
   // Detect qty per position: "2 de direccion y 8 para atras"
@@ -533,30 +534,30 @@ async function handleMessage(userId, incomingText, platform) {
       const qty = parseInt(m[1]);
       const posText = m[2].toLowerCase();
       const posKey = Object.entries(POSITION_KEYWORDS).find(([k,kws]) => kws.some(kw => posText.includes(kw)))?.[0];
-      if (posKey && qty) session.pendingQty[posKey] = qty;
+      if (posKey && qty) session.current.pendingQty[posKey] = qty;
     });
   }
 
   const pos = normalizePosition(text);
   if (pos) {
-    session.position = pos;
+    session.current.position = pos;
     // Check if message mentions multiple positions (e.g. "2 steer y 8 traction")
     const allPositions = [];
     for (const [key, kws] of Object.entries(POSITION_KEYWORDS)) {
       if (kws.some(k => text.toLowerCase().includes(k))) allPositions.push(key);
     }
     if (allPositions.length > 1) {
-      session.position = allPositions[0];
-      session.pendingPositions = allPositions.slice(1);
+      session.current.position = allPositions[0];
+      session.current.pendingPositions = allPositions.slice(1);
     }
   }
-  if (/all.?position|todas.?posicion/i.test(text)) session.position = 'trailer';
+  if (/all.?position|todas.?posicion/i.test(text)) session.current.position = 'trailer';
 
   const brands = ['Royal Black','Dynastone','Falken','Firestone','Pirelli','Continental','Yokohama',
     'Headway','Sunfull','Westlake','Aplus','Speedmax','Driveforce','DRC','JK','Kelly','Lanvigator',
     'Ovation','Itaro','Tornado','Easymax','Jetway','Kobe','Dplus'];
   const brandHit = brands.find(b => text.toLowerCase().includes(b.toLowerCase()));
-  if (brandHit) session.brand = brandHit;
+  if (brandHit) session.current.brand = brandHit;
 
   const cheapest = /económic|econom|cheapest|más barat|barata|menor precio|precio.?más.?bajo/i.test(text);
 
@@ -572,7 +573,7 @@ async function handleMessage(userId, incomingText, platform) {
     { keywords: /coreanas?|korea|corea/i,                    value: 'KOREA' },
   ];
   const originMatch = ORIGIN_MAP.find(o => o.keywords.test(text));
-  if (originMatch) session.origin = originMatch.value;
+  if (originMatch) session.current.origin = originMatch.value;
 
   // ── Build context tags ────────────────────────────────────────────────────
   let contactContext = '';
@@ -589,34 +590,39 @@ async function handleMessage(userId, incomingText, platform) {
   // ── Fetch inventory ───────────────────────────────────────────────────────
   let inventoryContext = '';
   // Only fetch if we have a specific size — never search without size
-  if (session.size && session.size.length > 3) {
+  if (session.current.size && session.current.size.length > 3) {
     try {
       await fetchAllInventory();
-      console.log(`[FILTER] size=${session.size} pos=${session.position} origin=${session.origin} brand=${session.brand}`);
-      const tires = filterTires(session.size, session.position, session.brand, session.origin);
-      session.tires = tires;
+      console.log(`[FILTER] size=${session.current.size} pos=${session.current.position} origin=${session.current.origin} brand=${session.current.brand}`);
+      const tires = filterTires(session.current.size, session.current.position, session.current.brand, session.current.origin);
+      session.current.tires = tires;
 
       if (tires.length > 0) {
         const cheapLabel = cheapest ? ' — CLIENTE QUIERE LA MÁS ECONÓMICA, destaca la #1' : '';
-        const isTruck    = getRimSize(session.size) >= 22.5;
-        const posLabel   = isTruck ? (session.position ? ` | Posición: ${session.position}` : ' | (sin filtro posición — ES CAMIÓN, pregunta posición)') : ' | AUTOMÓVIL';
+        const isTruck    = getRimSize(session.current.size) >= 22.5;
+        const posLabel   = isTruck ? (session.current.position ? ` | Posición: ${session.current.position}` : ' | (sin filtro posición — ES CAMIÓN, pregunta posición)') : ' | AUTOMÓVIL';
         const mountNote  = isTruck ? '| Monte disponible' : '| NO PRESTAMOS SERVICIO DE MONTE PARA ESTA MEDIDA — no decir que es gratis, decir que no ofrecemos instalación';
         const list = tires.map((t,i) =>
           `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruck ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
         ).join('\n');
-        const brandLabel  = session.brand  ? ` | Marca: ${session.brand}` : '';
-        const originLabel = session.origin ? ` | Origen: ${session.origin}` : ' | Sin filtro de origen (mostrar todas las marcas disponibles)';
-        inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
+        const brandLabel  = session.current.brand  ? ` | Marca: ${session.current.brand}` : '';
+        const originLabel = session.current.origin ? ` | Origen: ${session.current.origin}` : ' | Sin filtro de origen (mostrar todas las marcas disponibles)';
+        inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.current.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
 
         // Mark this position as shown, move to next pending if any
-        if (session.position) session.shownPositions.push(session.position);
-        if (session.pendingPositions.length > 0) {
-          session.position = session.pendingPositions.shift();
-          session.origin = null; // Clear origin for subsequent positions
+        if (session.current.position) session.current.shownPositions.push(session.current.position);
+        // Keep session.current.tires intact so client can still pick from the list
+        // It will be replaced when the next position search runs
+        if (session.current.pendingPositions.length > 0) {
+          session.current.position = session.current.pendingPositions.shift();
+          session.current.origin = null; // Clear origin for subsequent positions
         } else {
-          session.position = null;
-          session.origin = null;
+          session.current.position = null;
+          session.current.origin = null;
         }
+
+        // Save this search to session history
+        saveCurrentSearch(session);
 
         // Log lead once we have name + search query
         if (!session.logged && session.name) {
@@ -625,12 +631,12 @@ async function handleMessage(userId, incomingText, platform) {
             phone: session.phone || userId,
             name:  session.name,
             email: session.email || '',
-            query: `${session.size} ${session.position||''} ${session.brand||''}`.trim(),
+            query: `${session.current.size} ${session.current.position||''} ${session.current.brand||''}`.trim(),
           });
           session.logged = true;
         }
       } else {
-        inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.size}${session.position?' pos:'+session.position:''}${session.brand?' marca:'+session.brand:''}. Invita a continuar por este mismo chat.]`;
+        inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}${session.current.brand?' marca:'+session.current.brand:''}. Invita a continuar por este mismo chat.]`;
       }
     } catch (err) {
       console.error('Inventory fetch error:', err.message);
@@ -643,8 +649,9 @@ async function handleMessage(userId, incomingText, platform) {
   const qtyMatch   = text.match(/\b([1-9][0-9]?)\s*(llantas?|tires?|ruedas?|unidades?|pcs?)?/i);
   const wantsQuote = /cuanto|precio|total|costo|quote|how much|desglose|calcul|cotiz/i.test(text);
 
-  // Use current tires list or fall back to previously selected tires
-  const availableTires = session.tires.length > 0 ? session.tires : Object.values(session.selectedTires||{});
+  // Use current search tires, or fall back to last search with results
+  const lastSearch = getLastSearch(session);
+  const availableTires = session.current.tires.length > 0 ? session.current.tires : (lastSearch ? lastSearch.tires : []);
   if (availableTires.length > 0 && (qtyMatch || wantsQuote)) {
     let tire = availableTires[0];
 
@@ -662,16 +669,16 @@ async function handleMessage(userId, incomingText, platform) {
     const brandPick = availableTires.findIndex(t =>
       t.brand && text.toLowerCase().includes(t.brand.toLowerCase())
     );
-    if (brandPick >= 0) tire = session.tires[brandPick];
+    if (brandPick >= 0) tire = session.current.tires[brandPick];
 
     // Save selection to session so it persists
     if (isJustNumber || pickMatch || brandPick >= 0) {
-      const posKey = session.shownPositions[session.shownPositions.length - 1] || 'default';
+      const posKey = session.current.shownPositions[session.current.shownPositions.length - 1] || 'default';
       session.selectedTires[posKey] = tire;
     }
 
     // If message is just a number, use it as selection not quantity
-    const totalQty = Object.values(session.pendingQty||{}).reduce((a,b)=>a+b,0);
+    const totalQty = Object.values(session.current.pendingQty||{}).reduce((a,b)=>a+b,0) || (lastSearch?.qty || 0);
     const qty = totalQty > 0 ? totalQty : (!isJustNumber && qtyMatch ? parseInt(qtyMatch[1]) : 4);
     const mount    = !/sin monte|without mount|no mount|solo llant/i.test(text);
     const valve    = /válvula|valvula|valve|stem/i.test(text);
@@ -690,7 +697,7 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   // ── Send to Claude ────────────────────────────────────────────────────────
-  const userMessage = text + contactContext + needsPhone + inventoryContext + quoteContext + emailOffer;
+  const userMessage = text + contactContext + needsPhone + searchesSummary + inventoryContext + quoteContext + emailOffer;
 
   session.history.push({ role:'user', content: userMessage });
   if (session.history.length > 6) session.history = session.history.slice(-6);
