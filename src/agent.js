@@ -356,6 +356,22 @@ function extractEmail(text) {
 // ── Sessions ─────────────────────────────────────────────────────────────────
 const sessions = new Map();
 
+function getLastSearch(session) {
+  if (!session.searches) return null;
+  return [...session.searches].reverse().find(s => s.tires && s.tires.length > 0) || null;
+}
+
+function saveCurrentSearch(session) {
+  if (!session.current || !session.current.size || !session.current.tires || session.current.tires.length === 0) return;
+  if (!session.searches) session.searches = [];
+  const key = [session.current.size, session.current.position, session.current.origin, session.current.brand]
+    .filter(Boolean).join('|');
+  const existing = session.searches.findIndex(s => s.key === key);
+  const entry = { ...session.current, key };
+  if (existing >= 0) session.searches[existing] = entry;
+  else session.searches.push(entry);
+}
+
 function getSession(id) {
   if (!sessions.has(id)) {
     sessions.set(id, {
