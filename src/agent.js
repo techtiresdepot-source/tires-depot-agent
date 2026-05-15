@@ -488,8 +488,8 @@ async function handleMessage(userId, incomingText, platform) {
   if (sizeMatch) {
     // Normalize 235/85/16 → 235/85R16
     const newSize = sizeMatch[0].replace(/(\d{2,3}\/\d{2,3})\/(?!R)(\d{2})/i, '\$1R\$2');
-    if (newSize !== session.size) {
-      session.origin = null; // Reset origin when searching a new size
+    if (session.size && newSize !== session.size) {
+      session.origin = null; // Reset origin only when changing to a different size
     }
     session.size = newSize;
     session.step = 'searching';
