@@ -461,6 +461,24 @@ async function handleMessage(userId, incomingText, platform) {
   const text     = incomingText.trim();
   const isWA     = platform === 'whatsapp';
 
+  // Migrate old session structure if needed
+  if (!session.current) {
+    session.current = {
+      size: session.size || null,
+      position: session.position || null,
+      origin: session.origin || null,
+      brand: session.brand || null,
+      tires: session.tires || [],
+      qty: null,
+      pendingPositions: session.pendingPositions || [],
+      shownPositions: session.shownPositions || [],
+      pendingQty: session.pendingQty || {},
+    };
+    session.searches = session.searches || [];
+  }
+  if (!session.current.pendingQty) session.current.pendingQty = {};
+  if (!session.current.tires) session.current.tires = [];
+
   // WhatsApp: phone is the userId directly
   if (isWA && !session.phone) session.phone = userId;
 
