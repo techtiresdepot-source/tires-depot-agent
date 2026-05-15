@@ -360,12 +360,13 @@ function getSession(id) {
   if (!sessions.has(id)) {
     sessions.set(id, {
       history:       [],
-      tires:         [],
+      tires:         [],    // current search results
+      selectedTires: [],    // tires confirmed by client per position
       size:          null,
       position:      null,
-      pendingPositions: [], // positions still to search
-      shownPositions:   [], // positions already shown
-      pendingQty:       {}, // {position: qty} for multi-position orders
+      pendingPositions: [],
+      shownPositions:   [],
+      pendingQty:       {},
       brand:         null,
       // contact info
       name:          null,
@@ -461,6 +462,24 @@ async function handleMessage(userId, incomingText, platform) {
 
   // WhatsApp: phone is the userId directly
   if (isWA && !session.phone) session.phone = userId;
+
+  // Auto-reset if history is too old or client starts fresh with a tire inquiry
+  // while session has stale data from previous conversation
+  const looksLikeNewInquiry = /\d{2,3}[\d\/R.]+|cuánto|precio|necesito|busco|tienen/i.test(text);
+  if (looksLikeNewInquiry && session.history.length >= 6) {
+    // Keep name and phone but reset tire search state
+    const savedName  = session.name;
+    const savedPhone = session.phone;
+    const savedEmail = session.email;
+    sessions.set(userId, {
+      history: [], tires: [], size: null, position: null,
+      pendingPositions: [], shownPositions: [], pendingQty: {},
+      origin: null, brand: null,
+      name: savedName, phone: savedPhone, email: savedEmail,
+      step: 'searching', logged: false, emailOffered: false,
+    });
+    return handleMessage(userId, text, platform);
+  }
 
   // ── Capture name if we asked last turn ───────────────────────────────────
   if (!session.name && session.step === 'name') {
@@ -624,8 +643,10 @@ async function handleMessage(userId, incomingText, platform) {
   const qtyMatch   = text.match(/\b([1-9][0-9]?)\s*(llantas?|tires?|ruedas?|unidades?|pcs?)?/i);
   const wantsQuote = /cuanto|precio|total|costo|quote|how much|desglose|calcul|cotiz/i.test(text);
 
-  if (session.tires.length > 0 && (qtyMatch || wantsQuote)) {
-    let tire = session.tires[0];
+  // Use current tires list or fall back to previously selected tires
+  const availableTires = session.tires.length > 0 ? session.tires : Object.values(session.selectedTires||{});
+  if (availableTires.length > 0 && (qtyMatch || wantsQuote)) {
+    let tire = availableTires[0];
 
     // Detect selection: "2", "opción 2", "#2", "el 2", "la 2", brand name
     const isJustNumber = /^\s*\d+\s*$/.test(text); // message is ONLY a number
@@ -634,14 +655,20 @@ async function handleMessage(userId, incomingText, platform) {
 
     if (pickMatch) {
       const idx = parseInt(pickMatch[1]) - 1;
-      if (idx >= 0 && idx < session.tires.length) tire = session.tires[idx];
+      if (idx >= 0 && idx < availableTires.length) tire = availableTires[idx];
     }
 
     // Also detect by brand name in text
-    const brandPick = session.tires.findIndex(t =>
+    const brandPick = availableTires.findIndex(t =>
       t.brand && text.toLowerCase().includes(t.brand.toLowerCase())
     );
     if (brandPick >= 0) tire = session.tires[brandPick];
+
+    // Save selection to session so it persists
+    if (isJustNumber || pickMatch || brandPick >= 0) {
+      const posKey = session.shownPositions[session.shownPositions.length - 1] || 'default';
+      session.selectedTires[posKey] = tire;
+    }
 
     // If message is just a number, use it as selection not quantity
     const totalQty = Object.values(session.pendingQty||{}).reduce((a,b)=>a+b,0);
@@ -656,8 +683,8 @@ async function handleMessage(userId, incomingText, platform) {
 
   // ── Email offer — after first quote or inventory shown, once per session ──
   let emailOffer = '';
-  if (!session.emailOffered && !session.email && session.name &&
-      (quoteContext || (inventoryContext && session.tires.length > 0))) {
+  // Only offer email after a real quote (not just inventory listing)
+  if (!session.emailOffered && !session.email && session.name && quoteContext) {
     emailOffer = '\n[OFFER_EMAIL]';
     session.emailOffered = true;
   }
@@ -666,7 +693,7 @@ async function handleMessage(userId, incomingText, platform) {
   const userMessage = text + contactContext + needsPhone + inventoryContext + quoteContext + emailOffer;
 
   session.history.push({ role:'user', content: userMessage });
-  if (session.history.length > 10) session.history = session.history.slice(-10);
+  if (session.history.length > 6) session.history = session.history.slice(-6);
 
   // First message — set step to ask for name
   if (session.history.length === 1 && !session.name) session.step = 'name';
