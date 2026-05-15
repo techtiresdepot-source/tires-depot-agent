@@ -420,7 +420,7 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
 - Con tamaño + posición → muestra TODOS los resultados de [INVENTORY DATA] en lista numerada
 - Si piden "la más económica" → destaca la #1 (lista ordenada precio asc)
 - Si mencionan marca → filtra por esa marca
-- Si mencionan origen (americanas, vietnamitas, brasileñas, japonesas, indias, camboyanas, etc.) → filtra por el país en el nombre del producto. El filtro de origen se mantiene mientras el cliente siga eligiendo dentro de esa misma búsqueda. Si hay varias opciones de la misma marca con diferente país, NUNCA las mezcles — muestra solo las que coinciden con el origen solicitado.
+- Si mencionan origen (americanas, vietnamitas, brasileñas, japonesas, indias, camboyanas, etc.) → filtra por el país en el nombre del producto. El filtro de origen aplica SOLO a la búsqueda donde el cliente lo mencionó. Si [INVENTORY DATA] dice 'Sin filtro de origen' → muestra TODAS las marcas disponibles sin filtrar por país, aunque el cliente haya pedido americanas en una búsqueda anterior.
 - Cuando el cliente elige llantas para VARIAS POSICIONES → genera UNA SOLA cotización sumando todas (ej: 2 Steer + 8 Traction = 10 llantas total, 10 válvulas, 10 montes). Detalla cada grupo en la cotización pero el total es uno solo.
 - Pregunta si monta con nosotros o prefiere delivery → si monta: pregunta válvulas ($5/c) y disposición de llantas viejas ($10/c) → muestra [QUOTE]. Si delivery: NO preguntes disposición.
 
@@ -605,7 +605,7 @@ async function handleMessage(userId, incomingText, platform) {
           `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruck ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
         ).join('\n');
         const brandLabel  = session.brand  ? ` | Marca: ${session.brand}` : '';
-        const originLabel = session.origin ? ` | Origen: ${session.origin}` : '';
+        const originLabel = session.origin ? ` | Origen: ${session.origin}` : ' | Sin filtro de origen (mostrar todas las marcas disponibles)';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
 
         // Mark this position as shown, move to next pending if any
