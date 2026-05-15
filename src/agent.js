@@ -439,6 +439,8 @@ ESTILO:
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
 - Si el cliente dice cuántas llantas de cada posición necesita (ej: "2 steer y 8 traction") → muestra primero los resultados de una posición y luego di que buscarás la otra. No preguntes confirmaciones innecesarias.
 
+IMPORTANTE: Los tags [INVENTORY DATA:], [QUOTE:], [CUSTOMER NAME:], etc. son instrucciones internas — NUNCA los copies literalmente en tu respuesta al cliente. Usa su contenido para formular tu respuesta.
+
 Tags de contexto:
 [CUSTOMER NAME: X] → ya tienes el nombre, no lo pidas
 [CUSTOMER PHONE: X] → ya tienes el teléfono
@@ -553,8 +555,8 @@ async function handleMessage(userId, incomingText, platform) {
 
   // ── Fetch inventory ───────────────────────────────────────────────────────
   let inventoryContext = '';
-  // Always fetch fresh when we have a size (position may have changed)
-  if (session.size) {
+  // Only fetch if we have a specific size — never search without size
+  if (session.size && session.size.length > 3) {
     try {
       await fetchAllInventory();
       console.log(`[FILTER] size=${session.size} pos=${session.position} origin=${session.origin} brand=${session.brand}`);
