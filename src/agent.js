@@ -390,8 +390,8 @@ DATOS DEL NEGOCIO:
 REGLAS DE PRECIOS:
 - Tax FL: 7% sobre llantas y válvulas. El monte, descuento y disposición de basura NO llevan tax.
 - Monte: ${BIZ.mountStandard}/llanta estándar | ${BIZ.mountLarge}/llanta medidas 385 y 425
-- Válvula: ${BIZ.valve}/llanta — OPCIONAL, solo si el rin está oxidado o desgastado. El cliente decide si la necesita.
-- Disposición de basura: ${BIZ.disposal}/llanta — OPCIONAL, solo si montan con nosotros y quieren que nos encarguemos de las llantas viejas
+- Válvula: ${BIZ.valve}/llanta — OPCIONAL. Pregunta solo el precio, sin explicar cuándo aplica.
+- Disposición de llantas viejas: ${BIZ.disposal}/llanta — OPCIONAL, SOLO cuando el cliente monta con nosotros en tienda. Si pide delivery, NO mencionar esta opción.
 - Descuento: -${BIZ.mountDiscount}/llanta al montar con nosotros — se descuenta del precio de la llanta, por lo que también reduce la base del tax
 - Free delivery en el área de Miami. Otros condados tienen costo adicional.
 - Pago en efectivo (cash): precio normal, sin descuento
@@ -415,8 +415,8 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
 - Con tamaño + posición → muestra TODOS los resultados de [INVENTORY DATA] en lista numerada
 - Si piden "la más económica" → destaca la #1 (lista ordenada precio asc)
 - Si mencionan marca → filtra por esa marca
-- Si mencionan origen (americanas, vietnamitas, brasileñas, japonesas, indias, camboyanas, etc.) → filtra por el país en el nombre del producto
-- Cliente elige llanta → pregunta cuántas → pregunta si necesita válvulas (rin oxidado/desgastado) → si van a montar con nosotros pregunta si quieren disposición de llantas viejas ($10/c) → muestra [QUOTE]
+- Si mencionan origen (americanas, vietnamitas, brasileñas, japonesas, indias, camboyanas, etc.) → filtra por el país en el nombre del producto. El filtro de origen se mantiene mientras el cliente siga eligiendo dentro de esa misma búsqueda. Si hay varias opciones de la misma marca con diferente país, NUNCA las mezcles — muestra solo las que coinciden con el origen solicitado.
+- Cliente elige llanta → pregunta cuántas → pregunta si monta con nosotros o prefiere delivery → si monta: pregunta si necesita válvulas ($5/c) y si quiere disposición de llantas viejas ($10/c) → muestra [QUOTE]. Si prefiere delivery: NO preguntes por disposición de llantas viejas (no aplica).
 
 MANEJO DE PREGUNTAS FUERA DEL FLUJO (crítico):
 - Si el cliente pregunta algo general (monte, válvula, delivery, financiación, ubicación) mientras ya hay una búsqueda activa → responde brevemente y LUEGO retoma: si ya mostraste opciones di "Retomando tu búsqueda, ¿cuál de estas opciones prefieres?" y repite la lista. NUNCA pidas de nuevo la medida o posición si ya las tienes.
@@ -487,7 +487,11 @@ async function handleMessage(userId, incomingText, platform) {
   const sizeMatch = text.match(/(\d{2,3}[\/]\d{2,3}[\/rR]\d{2}[\w.]*|\d{2,3}[\/\\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*|\d{2}[rR]\d{2}\.?\d*)/i);
   if (sizeMatch) {
     // Normalize 235/85/16 → 235/85R16
-    session.size = sizeMatch[0].replace(/(\d{2,3}\/\d{2,3})\/(?!R)(\d{2})/i, '\$1R\$2');
+    const newSize = sizeMatch[0].replace(/(\d{2,3}\/\d{2,3})\/(?!R)(\d{2})/i, '\$1R\$2');
+    if (newSize !== session.size) {
+      session.origin = null; // Reset origin when searching a new size
+    }
+    session.size = newSize;
     session.step = 'searching';
   }
   // If no name yet, also store size for later but keep step as name
@@ -553,9 +557,9 @@ async function handleMessage(userId, incomingText, platform) {
         const originLabel = session.origin ? ` | Origen: ${session.origin}` : '';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
 
-        // Reset position and origin after use — each search is independent
+        // Reset position after use — each new position search is independent
+        // Origin resets only when a new size is searched
         session.position = null;
-        session.origin   = null;
 
         // Log lead once we have name + search query
         if (!session.logged && session.name) {
