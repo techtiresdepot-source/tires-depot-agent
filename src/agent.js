@@ -365,6 +365,7 @@ function getSession(id) {
       position:      null,
       pendingPositions: [], // positions still to search
       shownPositions:   [], // positions already shown
+      pendingQty:       {}, // {position: qty} for multi-position orders
       brand:         null,
       // contact info
       name:          null,
@@ -419,7 +420,8 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
 - Si piden "la más económica" → destaca la #1 (lista ordenada precio asc)
 - Si mencionan marca → filtra por esa marca
 - Si mencionan origen (americanas, vietnamitas, brasileñas, japonesas, indias, camboyanas, etc.) → filtra por el país en el nombre del producto. El filtro de origen se mantiene mientras el cliente siga eligiendo dentro de esa misma búsqueda. Si hay varias opciones de la misma marca con diferente país, NUNCA las mezcles — muestra solo las que coinciden con el origen solicitado.
-- Cliente elige llanta → pregunta cuántas → pregunta si monta con nosotros o prefiere delivery → si monta: pregunta si necesita válvulas ($5/c) y si quiere disposición de llantas viejas ($10/c) → muestra [QUOTE]. Si prefiere delivery: NO preguntes por disposición de llantas viejas (no aplica).
+- Cuando el cliente elige llantas para VARIAS POSICIONES → genera UNA SOLA cotización sumando todas (ej: 2 Steer + 8 Traction = 10 llantas total, 10 válvulas, 10 montes). Detalla cada grupo en la cotización pero el total es uno solo.
+- Pregunta si monta con nosotros o prefiere delivery → si monta: pregunta válvulas ($5/c) y disposición de llantas viejas ($10/c) → muestra [QUOTE]. Si delivery: NO preguntes disposición.
 
 MANEJO DE PREGUNTAS FUERA DEL FLUJO (crítico):
 - Si el cliente pregunta algo general (monte, válvula, delivery, financiación, ubicación) mientras ya hay una búsqueda activa → responde brevemente y LUEGO retoma: si ya mostraste opciones di "Retomando tu búsqueda, ¿cuál de estas opciones prefieres?" y repite la lista. NUNCA pidas de nuevo la medida o posición si ya las tienes.
@@ -502,6 +504,17 @@ async function handleMessage(userId, incomingText, platform) {
   // If no name yet, also store size for later but keep step as name
   if (!session.name && text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)) {
     session.size = text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)[0];
+  }
+
+  // Detect qty per position: "2 de direccion y 8 para atras"
+  const qtyPosMatches = [...text.matchAll(/(\d+)\s*(?:de\s+)?(?:llantas?\s+)?(?:de\s+)?(direccion|dirección|delantera|steer|traction|traccion|trasera|atrás|atras|trailer|remolque)/gi)];
+  if (qtyPosMatches.length > 0) {
+    qtyPosMatches.forEach(m => {
+      const qty = parseInt(m[1]);
+      const posText = m[2].toLowerCase();
+      const posKey = Object.entries(POSITION_KEYWORDS).find(([k,kws]) => kws.some(kw => posText.includes(kw)))?.[0];
+      if (posKey && qty) session.pendingQty[posKey] = qty;
+    });
   }
 
   const pos = normalizePosition(text);
@@ -617,7 +630,8 @@ async function handleMessage(userId, incomingText, platform) {
       const idx = parseInt(pickMatch[1]) - 1;
       if (idx >= 0 && idx < session.tires.length) tire = session.tires[idx];
     }
-    const qty   = qtyMatch ? parseInt(qtyMatch[1]) : 4;
+    const totalQty = Object.values(session.pendingQty||{}).reduce((a,b)=>a+b,0);
+    const qty = totalQty > 0 ? totalQty : (qtyMatch ? parseInt(qtyMatch[1]) : 4);
     const mount    = !/sin monte|without mount|no mount|solo llant/i.test(text);
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas|old tires/i.test(text);
