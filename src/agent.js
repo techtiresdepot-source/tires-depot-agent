@@ -363,6 +363,8 @@ function getSession(id) {
       tires:         [],
       size:          null,
       position:      null,
+      pendingPositions: [], // positions still to search
+      shownPositions:   [], // positions already shown
       brand:         null,
       // contact info
       name:          null,
@@ -412,6 +414,7 @@ PASO 2 — TELÉFONO (solo si [NEEDS_PHONE]):
 PASO 3 — BÚSQUEDA DE LLANTAS:
 - Si no tienes tamaño → pregúntalo
 - Si tienes tamaño pero no posición → pregunta posición SOLO si es llanta de camión (rin 22.5 o mayor). Los valores exactos son: Steer (delantera), Traction (tracción/trasera), Trailer, All Position. Para llantas de automóvil (rin 16, 17, 18, etc.) NO preguntes la posición.
+- Si el cliente pide varias posiciones en un mensaje (ej: "2 delantera y 8 trasera") → el sistema mostrará primero los resultados de la primera posición en [INVENTORY DATA], luego automáticamente buscará la siguiente. Muestra cada una claramente etiquetada.
 - Con tamaño + posición → muestra TODOS los resultados de [INVENTORY DATA] en lista numerada
 - Si piden "la más económica" → destaca la #1 (lista ordenada precio asc)
 - Si mencionan marca → filtra por esa marca
@@ -500,7 +503,18 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   const pos = normalizePosition(text);
-  if (pos) session.position = pos;
+  if (pos) {
+    session.position = pos;
+    // Check if message mentions multiple positions (e.g. "2 steer y 8 traction")
+    const allPositions = [];
+    for (const [key, kws] of Object.entries(POSITION_KEYWORDS)) {
+      if (kws.some(k => text.toLowerCase().includes(k))) allPositions.push(key);
+    }
+    if (allPositions.length > 1) {
+      session.position = allPositions[0];
+      session.pendingPositions = allPositions.slice(1);
+    }
+  }
   if (/all.?position|todas.?posicion/i.test(text)) session.position = 'trailer';
 
   const brands = ['Royal Black','Dynastone','Falken','Firestone','Pirelli','Continental','Yokohama',
@@ -539,6 +553,7 @@ async function handleMessage(userId, incomingText, platform) {
 
   // ── Fetch inventory ───────────────────────────────────────────────────────
   let inventoryContext = '';
+  // Always fetch fresh when we have a size (position may have changed)
   if (session.size) {
     try {
       await fetchAllInventory();
@@ -557,9 +572,13 @@ async function handleMessage(userId, incomingText, platform) {
         const originLabel = session.origin ? ` | Origen: ${session.origin}` : '';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
 
-        // Reset position after use — each new position search is independent
-        // Origin resets only when a new size is searched
-        session.position = null;
+        // Mark this position as shown, move to next pending if any
+        if (session.position) session.shownPositions.push(session.position);
+        if (session.pendingPositions.length > 0) {
+          session.position = session.pendingPositions.shift();
+        } else {
+          session.position = null;
+        }
 
         // Log lead once we have name + search query
         if (!session.logged && session.name) {
