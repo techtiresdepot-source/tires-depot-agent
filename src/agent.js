@@ -577,8 +577,10 @@ async function handleMessage(userId, incomingText, platform) {
         if (session.position) session.shownPositions.push(session.position);
         if (session.pendingPositions.length > 0) {
           session.position = session.pendingPositions.shift();
+          session.origin = null; // Clear origin for subsequent positions
         } else {
           session.position = null;
+          session.origin = null;
         }
 
         // Log lead once we have name + search query
