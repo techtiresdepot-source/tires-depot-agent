@@ -534,7 +534,7 @@ async function handleMessage(userId, incomingText, platform) {
       const qty = parseInt(m[1]);
       const posText = m[2].toLowerCase();
       const posKey = Object.entries(POSITION_KEYWORDS).find(([k,kws]) => kws.some(kw => posText.includes(kw)))?.[0];
-      if (posKey && qty) session.current.pendingQty[posKey] = qty;
+      if (posKey && qty) { if (!session.current.pendingQty) session.current.pendingQty = {}; session.current.pendingQty[posKey] = qty; }
     });
   }
 
