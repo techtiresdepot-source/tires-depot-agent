@@ -641,12 +641,15 @@ async function handleMessage(userId, incomingText, platform) {
     try {
       await fetchAllInventory();
       // Don't apply brand to pending positions — only to the position explicitly requested
-      const isFirstPosition = !session.current.shownPositions || session.current.shownPositions.length === 0;
+      // Track how many searches have been done in this session
+      if (!session.current.searchCount) session.current.searchCount = 0;
+      const isFirstPosition = session.current.searchCount === 0;
       // brandOnlyForCurrent=true means brand was mentioned alongside other positions
       // Apply brand ONLY to the first position search, null for all subsequent ones
       const brandForSearch = session.current.brandOnlyForCurrent && !isFirstPosition
         ? null
         : session.current.brand;
+      session.current.searchCount++; // increment after each search
       console.log(`[FILTER] size=${session.current.size} pos=${session.current.position} origin=${session.current.origin} brand=${brandForSearch} (isFirst=${isFirstPosition})`);
       const tires = filterTires(session.current.size, session.current.position, brandForSearch, session.current.origin);
       session.current.tires = tires;
@@ -694,11 +697,12 @@ async function handleMessage(userId, incomingText, platform) {
         }
       } else if (brandForSearch) {
         // No results with brand filter — retry without brand to show alternatives
+        const isTruckRetry = getRimSize(session.current.size) >= 22.5;
         const tiresNoBrand = filterTires(session.current.size, session.current.position, null, session.current.origin);
         if (tiresNoBrand.length > 0) {
           session.current.tires = tiresNoBrand;
           const list = tiresNoBrand.map((t,i) =>
-            `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruck ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
+            `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruckRetry ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
           ).join('\n');
           inventoryContext = `\n\n[INVENTORY DATA: No hay ${brandForSearch} en ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. Alternativas disponibles (${tiresNoBrand.length}):\n${list}]`;
         } else {
