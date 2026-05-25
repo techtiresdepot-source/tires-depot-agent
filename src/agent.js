@@ -437,10 +437,11 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
 - Si el cliente pide varias posiciones en un mensaje → muestra primero los resultados de la primera posición, luego busca la siguiente automáticamente.
 - Con tamaño + posición → muestra TODOS los resultados de [INVENTORY DATA] en lista numerada
 - Si piden "la más económica" → destaca la #1 (lista ordenada precio asc)
-- Si mencionan marca → filtra por esa marca
+- Si mencionan marca → filtra por esa marca SOLO cuando está claramente asociada a esa posición. Ejemplo: 'Firestone delantera y 8 traseras' → Firestone SOLO para delantera, para traseras NO hay filtro de marca. Si el [INVENTORY DATA] no trae filtro de marca, muestra TODAS las marcas disponibles.
 - Si mencionan origen (americanas, vietnamitas, brasileñas, japonesas, indias, camboyanas, etc.) → filtra por el país en el nombre del producto. El filtro de origen aplica SOLO a la búsqueda donde el cliente lo mencionó. Si [INVENTORY DATA] dice 'Sin filtro de origen' → muestra TODAS las marcas disponibles sin filtrar por país, aunque el cliente haya pedido americanas en una búsqueda anterior.
-- Cuando el cliente elige llantas para VARIAS POSICIONES → genera UNA SOLA cotización sumando todas (ej: 2 Steer + 8 Traction = 10 llantas total, 10 válvulas, 10 montes). Detalla cada grupo en la cotización pero el total es uno solo.
-- Pregunta si monta con nosotros o prefiere delivery → si monta: pregunta válvulas ($5/c) y disposición de llantas viejas ($10/c) → muestra [QUOTE]. Si delivery: NO preguntes disposición.
+- Cuando el cliente elige llantas para VARIAS POSICIONES → la cotización final debe incluir TODOS los grupos. El tag [BÚSQUEDAS EN SESIÓN] muestra todas las búsquedas. Usa esos datos para presentar una cotización completa con cada grupo detallado y un total general.
+- Pregunta si monta con nosotros o prefiere delivery → si monta: pregunta válvulas ($5/c) y disposición de llantas viejas ($10/c). Si delivery: NO preguntes disposición.
+- SIEMPRE incluye todas las selecciones previas en la cotización final, no solo la última.
 
 MANEJO DE PREGUNTAS FUERA DEL FLUJO (crítico):
 - Si el cliente pregunta algo general (monte, válvula, delivery, financiación, ubicación) mientras ya hay una búsqueda activa → responde brevemente y LUEGO retoma: si ya mostraste opciones di "Retomando tu búsqueda, ¿cuál de estas opciones prefieres?" y repite la lista. NUNCA pidas de nuevo la medida o posición si ya las tienes.
@@ -456,7 +457,7 @@ ESTILO:
 - Español por defecto. Inglés solo si el cliente escribe en inglés.
 - ULTRA CORTO. Frases sueltas. Máximo 2 líneas. Sin cortesías, sin introducciones, sin despedidas.
 - Si tienes [INVENTORY DATA] → muéstralo directo, sin preámbulo.
-- Sin resultados → una línea corta y pregunta alternativa.
+- Sin resultados para marca específica → di que no hay de esa marca y muestra inmediatamente las opciones disponibles de otras marcas para esa medida/posición. No esperes a que el cliente pregunte.
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
 - Si el cliente dice cuántas llantas de cada posición necesita (ej: "2 steer y 8 traction") → muestra primero los resultados de una posición y luego di que buscarás la otra. No preguntes confirmaciones innecesarias.
 - Cuando el cliente responda con un número después de ver una lista de opciones, interpreta ese número como la SELECCIÓN de esa opción (ej: responde "2" → elige la opción #2 de la lista), NO como cantidad. La cantidad ya se conoce del mensaje inicial.
@@ -592,7 +593,15 @@ async function handleMessage(userId, incomingText, platform) {
     'Headway','Sunfull','Westlake','Aplus','Speedmax','Driveforce','DRC','JK','Kelly','Lanvigator',
     'Ovation','Itaro','Tornado','Easymax','Jetway','Kobe','Dplus'];
   const brandHit = brands.find(b => text.toLowerCase().includes(b.toLowerCase()));
-  if (brandHit) session.current.brand = brandHit;
+  // Only assign brand if there's no pending position queue (single position request)
+  // If client says "Firestone delantera y 8 traseras", brand applies only to delantera
+  const hasPendingPositions = session.current.pendingPositions && session.current.pendingPositions.length > 0;
+  if (brandHit && !hasPendingPositions) session.current.brand = brandHit;
+  if (brandHit && hasPendingPositions) {
+    // Brand mentioned with multiple positions — only apply to current position
+    session.current.brand = brandHit;
+    // Will be cleared when position changes (already handled in position reset)
+  }
 
   const cheapest = /económic|econom|cheapest|más barat|barata|menor precio|precio.?más.?bajo/i.test(text);
 
@@ -691,7 +700,30 @@ async function handleMessage(userId, incomingText, platform) {
   // Use current search tires, or fall back to last search with results
   const lastSearch = getLastSearch(session);
   const availableTires = session.current.tires.length > 0 ? session.current.tires : (lastSearch ? lastSearch.tires : []);
-  if (availableTires.length > 0 && (qtyMatch || wantsQuote)) {
+
+  // Build combined quote if multiple searches exist and client is requesting final quote
+  const wantsFullQuote = /cotiz|total|cuanto|precio|quote|how much|desglose/i.test(text);
+  if (wantsFullQuote && session.searches && session.searches.length > 1) {
+    // Build combined quote for all searches
+    const combinedLines = ['*COTIZACION COMPLETA*'];
+    let grandTotal = 0;
+    const mount = !/sin monte|without mount|no mount|solo llant/i.test(text);
+    const valve = /válvula|valvula|valve|stem/i.test(text);
+    const disposal = /basura|disposal|dispos|llantas viejas/i.test(text);
+
+    session.searches.forEach(s => {
+      if (!s.tires || s.tires.length === 0) return;
+      const tire = s.tires[0]; // use first/cheapest
+      const qty = (s.pendingQty && Object.values(s.pendingQty).reduce((a,b)=>a+b,0)) || 1;
+      const c = calcTotal(tire, qty, mount, valve, disposal);
+      combinedLines.push(`*${qty}x ${tire.brand} ${tire.size}${s.position?' '+s.position:''}* — $${c.grand.toFixed(2)}`);
+      grandTotal += c.grand;
+    });
+    combinedLines.push(`
+*TOTAL GENERAL: $${grandTotal.toFixed(2)}*`);
+    if (!mount) combinedLines.push('🚚 Free delivery — área de Miami');
+    quoteContext = '\n\n[QUOTE:\n' + combinedLines.join('\n') + ']';
+  } else if (availableTires.length > 0 && (qtyMatch || wantsQuote)) {
     let tire = availableTires[0];
 
     // Detect selection: "2", "opción 2", "#2", "el 2", "la 2", brand name
