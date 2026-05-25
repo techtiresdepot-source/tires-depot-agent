@@ -596,16 +596,16 @@ async function handleMessage(userId, incomingText, platform) {
     'Ovation','Itaro','Tornado','Easymax','Jetway','Kobe','Dplus'];
   const brandHit = brands.find(b => text.toLowerCase().includes(b.toLowerCase()));
   if (brandHit) {
-    // Check if message mentions multiple positions AND brand is explicitly for one of them
-    // e.g. "2 firestone delanteras y 8 de tracción" — Firestone only for delantera
+    // Only store brand in session if this is a single-position request
+    // If multiple positions detected in same message, brand only applies to first position
+    // Store it separately so we can apply it only to current search, not pending ones
     const multiPosition = qtyPosMatches && qtyPosMatches.length > 1;
-    if (multiPosition) {
-      // Find which position the brand is associated with
-      // Brand applies only to current position (first one detected), not pending ones
+    if (!multiPosition) {
       session.current.brand = brandHit;
-      // pendingPositions will have brand cleared when position resets (already handled)
     } else {
+      // Multi-position: brand applies only to current search, mark pending as brand-free
       session.current.brand = brandHit;
+      session.current.brandOnlyForCurrent = true; // flag to clear on next position
     }
   }
 
@@ -647,8 +647,11 @@ async function handleMessage(userId, incomingText, platform) {
   if (session.current.size && session.current.size.length > 3 && hasNewSearchTrigger) {
     try {
       await fetchAllInventory();
-      console.log(`[FILTER] size=${session.current.size} pos=${session.current.position} origin=${session.current.origin} brand=${session.current.brand}`);
-      const tires = filterTires(session.current.size, session.current.position, session.current.brand, session.current.origin);
+      // Don't apply brand to pending positions — only to the position explicitly requested
+      const isFirstPosition = !session.current.shownPositions || session.current.shownPositions.length === 0;
+      const brandForSearch = (isFirstPosition || !session.current.brandOnlyForCurrent) ? session.current.brand : null;
+      console.log(`[FILTER] size=${session.current.size} pos=${session.current.position} origin=${session.current.origin} brand=${brandForSearch} (isFirst=${isFirstPosition})`);
+      const tires = filterTires(session.current.size, session.current.position, brandForSearch, session.current.origin);
       session.current.tires = tires;
 
       if (tires.length > 0) {
@@ -671,6 +674,7 @@ async function handleMessage(userId, incomingText, platform) {
           session.current.position = session.current.pendingPositions.shift();
           session.current.origin = null; // Clear origin for subsequent positions
           session.current.brand  = null; // Clear brand — each position is independent
+          session.current.brandOnlyForCurrent = false;
         } else {
           session.current.position = null;
           session.current.origin   = null;
