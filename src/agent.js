@@ -666,16 +666,30 @@ async function handleMessage(userId, incomingText, platform) {
         const originLabel = session.current.origin ? ` | Origen: ${session.current.origin}` : ' | Sin filtro de origen (mostrar todas las marcas disponibles)';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.current.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
 
-        // Mark this position as shown, move to next pending if any
+        // Mark this position as shown
         if (session.current.position) session.current.shownPositions.push(session.current.position);
-        // Keep session.current.tires intact so client can still pick from the list
-        // It will be replaced when the next position search runs
-        if (session.current.pendingPositions.length > 0) {
-          session.current.position = session.current.pendingPositions.shift();
-          session.current.origin = null; // Clear origin for subsequent positions
-          session.current.brand  = null; // Clear brand — each position is independent
+
+        // If there are more positions to search, do them NOW in the same cycle
+        while (session.current.pendingPositions && session.current.pendingPositions.length > 0) {
+          const nextPos = session.current.pendingPositions.shift();
+          // Clear brand/origin for subsequent positions
+          session.current.position = nextPos;
+          session.current.origin   = null;
+          session.current.brand    = null;
           session.current.brandOnlyForCurrent = false;
-        } else {
+
+          const nextTires = filterTires(session.current.size, nextPos, null, null);
+          if (nextTires.length > 0) {
+            const isTruckNext = getRimSize(session.current.size) >= 22.5;
+            const nextList = nextTires.map((t,i) =>
+              `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruckNext ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
+            ).join('\n');
+            inventoryContext += `\n\n[INVENTORY DATA POSICIÓN ${nextPos.toUpperCase()}: ${nextTires.length} llanta(s):\n${nextList}]`;
+            session.current.tires = nextTires;
+          }
+          if (session.current.position) session.current.shownPositions.push(session.current.position);
+        }
+        if (!session.current.pendingPositions || session.current.pendingPositions.length === 0) {
           session.current.position = null;
           session.current.origin   = null;
           session.current.brand    = null;
