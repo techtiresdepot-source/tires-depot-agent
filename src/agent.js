@@ -38,9 +38,9 @@ const FINANCE_OPTIONS = [
 ];
 
 const POSITION_KEYWORDS = {
-  steer:        ['steer','direccion','dirección','delantera','front','steering','eje delantero'],
-  traction:     ['traction','traccion','tracción','drive','motriz','trasera','rear','eje trasero'],
-  trailer:      ['trailer','remolque','todas posiciones'],
+  steer:          ['steer','direccion','dirección','delantera','front','steering','eje delantero'],
+  traction:       ['traction','traccion','tracción','drive','motriz','trasera','rear','eje trasero'],
+  trailer:        ['trailer','remolque','todas posiciones'],
   'all position': ['all position','all-position','todas','multi','universal'],
 };
 
@@ -95,9 +95,6 @@ function updateLeadEmail(phone, email) {
       return line;
     });
     if (updated) fs.writeFileSync(LOG_FILE, newLines.join('\n'), 'utf8');
-    else {
-      // Lead not yet in file — will be added when search happens
-    }
   } catch (e) {
     console.error('Lead email update error:', e.message);
   }
@@ -188,11 +185,20 @@ async function fetchAllInventory() {
     if (batch.length < 100) break;
     page++;
   }
-  // Debug: log first product attributes to verify structure
+
+  // Debug: log ALL attributes of first few products to verify structure
   if (all.length > 0) {
-    const sample = all[0];
-    console.log('[WC ATTRS]', sample.name, JSON.stringify(sample.attributes?.map(a => ({name:a.name, slug:a.slug, options:a.options}))));
+    all.slice(0, 3).forEach(p => {
+      console.log('[WC ATTRS]', p.name);
+      console.log('  attributes:', JSON.stringify(p.attributes?.map(a => ({
+        name: a.name,
+        slug: a.slug,
+        options: a.options
+      }))));
+      console.log('  tags:', JSON.stringify(p.tags?.map(t => ({ name: t.name, slug: t.slug }))));
+    });
   }
+
   cache.data = all.map(p => ({
     id:       p.id,
     name:     p.name,
@@ -200,102 +206,126 @@ async function fetchAllInventory() {
     stock:    p.stock_quantity ?? 0,
     inStock:  p.stock_status === 'instock',
     tags:     p.tags || [],
-    size:     attr(p,'tamano') || attr(p,'tamaño') || sizeFromName(p.name),
-    brand:    attr(p,'marca') || brandFromTags(p) || brandFromName(p.name),
-    position: attr(p,'position') || posFromName(p.name),
+    size:     attr(p,'tamano') || attr(p,'tamaño') || attr(p,'size') || sizeFromName(p.name),
+    brand:    attr(p,'marca') || attr(p,'brand') || attr(p,'pa_brand') || brandFromTags(p) || brandFromName(p.name),
+    position: attr(p,'position') || attr(p,'posicion') || attr(p,'posición') || posFromName(p.name),
     type:     p.categories?.some(c => c.slug.includes('camion') || c.slug.includes('truck')) ? 'truck' : 'passenger',
   })).filter(p => p.inStock && p.price > 0);
   cache.ts = Date.now();
+
+  // Debug: log brand resolution for first 5 products
+  cache.data.slice(0, 5).forEach(p => {
+    console.log(`[BRAND RESOLVED] "${p.name}" → brand="${p.brand}" size="${p.size}" pos="${p.position}"`);
+  });
+
   return cache.data;
 }
 
+// ── attr(): find a WooCommerce product attribute by name/slug ───────────────
+// Handles: pa_ prefix, accents, case differences, partial matches both ways
 function attr(p, name) {
-  // Match attribute name ignoring accents, case, spaces and pa_ prefix
-  const normalize = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/^pa_/,'').trim();
+  const normalize = s => s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/^pa_/, '')
+    .trim();
+
   const target = normalize(name);
-  const a = p.attributes?.find(x => normalize(x.name).includes(target) || normalize(x.slug||'').includes(target));
+
+  const a = p.attributes?.find(x => {
+    const attrName = normalize(x.name || '');
+    const attrSlug = normalize(x.slug || '');
+    return (
+      attrName === target ||
+      attrSlug === target ||
+      attrName.includes(target) ||
+      attrSlug.includes(target) ||
+      target.includes(attrName) ||
+      target.includes(attrSlug)
+    );
+  });
+
   // WooCommerce returns options array for custom attributes
   return a?.options?.[0] || null;
 }
 
+// Known brands list — used by brandFromTags and brandFromName
+const KNOWN_BRANDS = [
+  'Firestone','Yokohama','Headway','Kinbli','Invovic','Itaro','Dplus',
+  'Dynastone','Kelly','Pirelli','Continental','Falken','DRC','Drc','Hubtrac','Lanvigator',
+  'Ovation','Onix','Westlake','Aplus','Sunfull','Jetway','Kobe','JK',
+  'Royal Black','Speedmax','Driveforce','Tornado','Easymax',
+];
+
 function brandFromTags(p) {
-  // Extract brand from WooCommerce product tags
-  // Brands are stored as tags in some WC setups
-  const knownBrands = ['Firestone','Yokohama','Headway','Kinbli','Invovic','Itaro','Dplus',
-    'Dynastone','Kelly','Pirelli','Continental','Falken','DRC','Drc','Hubtrac','Lanvigator',
-    'Ovation','Onix','Westlake','Aplus','Sunfull','Jetway','Kobe','JK'];
-  const tag = p.tags?.find(t => knownBrands.some(b => t.name.toLowerCase().includes(b.toLowerCase())));
-  return tag ? knownBrands.find(b => tag.name.toLowerCase().includes(b.toLowerCase())) : null;
+  const tag = p.tags?.find(t =>
+    KNOWN_BRANDS.some(b => t.name.toLowerCase().includes(b.toLowerCase()))
+  );
+  return tag
+    ? KNOWN_BRANDS.find(b => tag.name.toLowerCase().includes(b.toLowerCase()))
+    : null;
 }
 
-function tagValue(p, name) {
-  // Search in WooCommerce tags (used for brand/size in some setups)
-  const normalize = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
-  const target = normalize(name);
-  const tag = p.tags?.find(t => normalize(t.name).includes(target) || normalize(t.slug||'').includes(target));
-  return tag?.name || null;
-}
 function sizeFromName(n) {
-  // Last resort: extract size from product name when attribute not present
-  // Handles: 215/60R16, 215-60R16, 11R22.5
   const m = n.match(/(\d{2,3}[-\/]\d{2,3}[-\/R]\d{2}[\w.]*|\d{2}R\d{2}\.?\d*)/i);
-  return m ? m[0].replace(/(\d{2,3})-(\d{2,3})-(\d{2})/i, '$1/$2R$3')
-               .replace(/(\d{2,3}\/\d{2,3})\/(\d{2})/i, '$1R$2')
-               .toUpperCase() : null;
+  return m
+    ? m[0]
+        .replace(/(\d{2,3})-(\d{2,3})-(\d{2})/i, '$1/$2R$3')
+        .replace(/(\d{2,3}\/\d{2,3})\/(\d{2})/i, '$1R$2')
+        .toUpperCase()
+    : null;
 }
+
 function brandFromName(n) {
-  const brands = ['Royal Black','Dynastone','Falken','Firestone','Pirelli','Continental','Yokohama',
-    'Headway','Sunfull','Westlake','Aplus','Speedmax','Driveforce','DRC','JK','Kelly','Lanvigator',
-    'Ovation','Itaro','Tornado','Easymax','Jetway','Kobe','Dplus'];
-  return brands.find(b => n.toLowerCase().includes(b.toLowerCase())) || '';
+  return KNOWN_BRANDS.find(b => n.toLowerCase().includes(b.toLowerCase())) || '';
 }
+
 function posFromName(n) {
   const l = n.toLowerCase();
-  if (l.includes('steer'))                            return 'steer';
-  if (l.includes('traction') || l.includes('drive'))  return 'traction';
-  if (l.includes('trailer'))                          return 'trailer';
-  if (l.includes('all position'))                     return 'all position';
+  if (l.includes('steer'))                            return 'Steer';
+  if (l.includes('traction') || l.includes('drive'))  return 'Traction';
+  if (l.includes('trailer'))                          return 'Trailer';
+  if (l.includes('all position'))                     return 'All Position';
   return '';
 }
 
 function normalizeSize(s) {
-  // First fix slash-only format: 235/85/16 → 235/85R16
   let v = (s||'').toUpperCase()
-    .replace(/(\d{2,3})[\/\-](\d{2,3})[\/](\d{2})/g, '$1/$2R$3'); // 235/85/16 → 235/85R16
-  // Then strip all non-alphanumeric
+    .replace(/(\d{2,3})[\/\-](\d{2,3})[\/](\d{2})/g, '$1/$2R$3');
   return v.replace(/[^A-Z0-9]/g,'');
 }
 
 function filterTires(size, position, brand, origin) {
   let tires = cache.data || [];
+
   if (size) {
     const q = normalizeSize(size);
     tires = tires.filter(p => {
-      // Primary: compare against WooCommerce size attribute (most reliable)
       const attrSize = normalizeSize(p.size);
-      // Secondary: search in full product name (fallback)
-      const nm = normalizeSize(p.name);
+      const nm       = normalizeSize(p.name);
       return attrSize === q || nm.includes(q);
     });
   }
+
   if (position) {
-    // Use exact WC attribute value as primary filter
     const wcVal = (POSITION_WC_VALUE[position] || position).toLowerCase();
     tires = tires.filter(p => {
       const pp = (p.position||'').toLowerCase();
-      // Exact match against WC attribute value
       return pp === wcVal;
     });
   }
+
   if (brand) {
-    // Use WC marca attribute as primary, fallback to name
-    const b = brand.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+    const normalize = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    const b = normalize(brand);
     tires = tires.filter(p => {
-      const pb = (p.brand||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
-      const pn = (p.name||'').toLowerCase();
-      return pb.includes(b) || pn.includes(b.toLowerCase());
+      const pb = normalize(p.brand || '');
+      const pn = normalize(p.name  || '');
+      return pb.includes(b) || pn.includes(b);
     });
   }
+
   if (origin) {
     const o = origin.toUpperCase();
     tires = tires.filter(p => (p.name||'').toUpperCase().includes(o));
@@ -305,14 +335,11 @@ function filterTires(size, position, brand, origin) {
 }
 
 function getRimSize(size) {
-  // Extract rim diameter — last number in size string
-  // Handles: 11R22.5, 215/60R16, 295/75/22.5, 295/75-22.5
   const m = (size||'').match(/(?:[Rr\/\-])(\d+\.?\d*)$/);
   return m ? parseFloat(m[1]) : 0;
 }
 
 function offersMounting(size) {
-  // Only offer mounting for rim size 22.5 or larger (truck tires)
   return getRimSize(size) >= 22.5;
 }
 
@@ -323,7 +350,6 @@ function getMountCost(size) {
 }
 
 function calcTotal(tire, qty, withMount, withValve=false, withDisposal=false, withBalancing=false) {
-  // Override: no mounting service for rims smaller than 22.5
   if (!offersMounting(tire.size)) { withMount = false; withDisposal = false; withBalancing = false; }
   const tireT     = tire.price * qty;
   const mc        = withMount                  ? getMountCost(tire.size) * qty : 0;
@@ -331,9 +357,6 @@ function calcTotal(tire, qty, withMount, withValve=false, withDisposal=false, wi
   const disposal  = withDisposal && withMount  ? BIZ.disposal * qty : 0;
   const balancing = withBalancing && withMount ? BIZ.balancing * qty : 0;
   const disc      = withMount                  ? BIZ.mountDiscount * qty : 0;
-  // Discount applies to tire price (not mount)
-  // Tax applies to (tires - discount) + valves
-  // Mount and disposal have no tax
   const tireTAfterDisc = tireT - disc;
   const taxBase        = tireTAfterDisc + vc;
   const tax            = taxBase * BIZ.taxRate;
@@ -350,7 +373,6 @@ function formatQuote(tire, qty, withMount, withValve=false, withDisposal=false, 
     `   ${tire.name}`,
     `   Llantas: ${fmt(c.tireT)}`,
   ];
-  // Válvula se cobra siempre
   lines.push(`   Válvulas ($5/c): ${fmt(c.vc)}`);
   if (withMount) {
     lines.push(`   Monte (${ml}): ${fmt(c.mc)}`);
@@ -407,20 +429,18 @@ function getSession(id) {
   if (!sessions.has(id)) {
     sessions.set(id, {
       history:       [],
-      tires:         [],    // current search results
-      selectedTires: [],    // tires confirmed by client per position
+      tires:         [],
+      selectedTires: [],
       size:          null,
       position:      null,
       pendingPositions: [],
       shownPositions:   [],
       pendingQty:       {},
       brand:         null,
-      // contact info
       name:          null,
-      phone:         null,   // set automatically for WhatsApp
+      phone:         null,
       email:         null,
-      // flow state
-      step:          'greeting',  // greeting → name → phone (non-WA) → searching → email_offer → done
+      step:          'greeting',
       logged:        false,
       emailOffered:  false,
     });
@@ -533,11 +553,9 @@ async function handleMessage(userId, incomingText, platform) {
   // WhatsApp: phone is the userId directly
   if (isWA && !session.phone) session.phone = userId;
 
-  // Auto-reset if history is too old or client starts fresh with a tire inquiry
-  // while session has stale data from previous conversation
+  // Auto-reset if history is too old or client starts fresh
   const looksLikeNewInquiry = /\d{2,3}[\d\/R.]+|cuánto|precio|necesito|busco|tienen/i.test(text);
   if (looksLikeNewInquiry && session.history.length >= 6) {
-    // Keep name and phone but reset tire search state
     const savedName  = session.name;
     const savedPhone = session.phone;
     const savedEmail = session.email;
@@ -577,26 +595,23 @@ async function handleMessage(userId, incomingText, platform) {
       updateLeadEmail(session.phone || userId, session.email);
       console.log(`[EMAIL] ${session.name} | ${session.email}`);
     }
-    // If customer declined (no/no gracias) just move on — Claude handles the reply
   }
 
   // ── Detect tire search params ─────────────────────────────────────────────
   const sizeMatch = text.match(/(\d{2,3}[\/]\d{2,3}[\/rR]\d{2}[\w.]*|\d{2,3}[\/\\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*|\d{2}[rR]\d{2}\.?\d*)/i);
   if (sizeMatch) {
-    // Normalize 235/85/16 → 235/85R16
-    const newSize = sizeMatch[0].replace(/(\d{2,3}\/\d{2,3})\/(?!R)(\d{2})/i, '\$1R\$2');
+    const newSize = sizeMatch[0].replace(/(\d{2,3}\/\d{2,3})\/(?!R)(\d{2})/i, '$1R$2');
     if (session.current.size && newSize !== session.current.size) {
-      session.current.origin = null; // Reset origin only when changing to a different size
+      session.current.origin = null;
     }
     session.current.size = newSize;
     session.current.step = 'searching';
   }
-  // If no name yet, also store size for later but keep step as name
   if (!session.name && text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)) {
     session.current.size = text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)[0];
   }
 
-  // Detect qty per position: "2 de direccion y 8 para atras"
+  // Detect qty per position
   const qtyPosMatches = [...text.matchAll(/(\d+)\s*(?:de\s+)?(?:llantas?\s+)?(?:de\s+)?(direccion|dirección|delantera|steer|traction|traccion|trasera|atrás|atras|trailer|remolque)/gi)];
   if (qtyPosMatches.length > 0) {
     qtyPosMatches.forEach(m => {
@@ -610,7 +625,6 @@ async function handleMessage(userId, incomingText, platform) {
   const pos = normalizePosition(text);
   if (pos) {
     session.current.position = pos;
-    // Check if message mentions multiple positions (e.g. "2 steer y 8 traction")
     const allPositions = [];
     for (const [key, kws] of Object.entries(POSITION_KEYWORDS)) {
       if (kws.some(k => text.toLowerCase().includes(k))) allPositions.push(key);
@@ -622,20 +636,16 @@ async function handleMessage(userId, incomingText, platform) {
   }
   if (/all.?position|todas.?posicion/i.test(text)) session.current.position = 'trailer';
 
-  const brands = ['Royal Black','Dynastone','Falken','Firestone','Pirelli','Continental','Yokohama',
-    'Headway','Sunfull','Westlake','Aplus','Speedmax','Driveforce','DRC','JK','Kelly','Lanvigator',
-    'Ovation','Itaro','Tornado','Easymax','Jetway','Kobe','Dplus'];
-  const brandHit = brands.find(b => text.toLowerCase().includes(b.toLowerCase()));
+  const brandHit = KNOWN_BRANDS.find(b => text.toLowerCase().includes(b.toLowerCase()));
   if (brandHit) {
     const multiPosition = qtyPosMatches && qtyPosMatches.length > 1;
-    // With multiple positions: brand is stored BUT flagged so it only applies to first search
     session.current.brand = brandHit;
     session.current.brandOnlyForCurrent = multiPosition;
   }
 
   const cheapest = /económic|econom|cheapest|más barat|barata|menor precio|precio.?más.?bajo/i.test(text);
 
-  // Detect origin filter from customer text
+  // Detect origin filter
   const ORIGIN_MAP = [
     { keywords: /american[ao]s?|\bUSA\b|estados unidos/i,  value: 'USA' },
     { keywords: /indian[ao]s?|\bINDIA\b/i,                 value: 'INDIA' },
@@ -655,7 +665,6 @@ async function handleMessage(userId, incomingText, platform) {
   if (session.phone) contactContext += `\n[CUSTOMER PHONE: ${session.phone}]`;
   if (session.email) contactContext += `\n[CUSTOMER EMAIL: ${session.email}]`;
 
-  // Ask for phone on non-WA channels once we have name
   let needsPhone = '';
   if (!isWA && session.name && !session.phone && session.step === 'phone') {
     needsPhone = '\n[NEEDS_PHONE]';
@@ -663,24 +672,21 @@ async function handleMessage(userId, incomingText, platform) {
 
   // ── Fetch inventory ───────────────────────────────────────────────────────
   let inventoryContext = '';
-  // Only search if this message triggered a size or position — not just from queue
   const hasNewSearchTrigger = sizeMatch || pos || /all.?position|todas.?posicion/i.test(text) ||
-    Object.keys(session.current.pendingQty||{}).some(k => 
+    Object.keys(session.current.pendingQty||{}).some(k =>
       POSITION_KEYWORDS[k]?.some(kw => text.toLowerCase().includes(kw))
     );
+
   if (session.current.size && session.current.size.length > 3 && hasNewSearchTrigger) {
     try {
       await fetchAllInventory();
-      // Don't apply brand to pending positions — only to the position explicitly requested
-      // Track how many searches have been done in this session
       if (!session.current.searchCount) session.current.searchCount = 0;
       const isFirstPosition = session.current.searchCount === 0;
-      // brandOnlyForCurrent=true means brand was mentioned alongside other positions
-      // Apply brand ONLY to the first position search, null for all subsequent ones
       const brandForSearch = session.current.brandOnlyForCurrent && !isFirstPosition
         ? null
         : session.current.brand;
-      session.current.searchCount++; // increment after each search
+      session.current.searchCount++;
+
       console.log(`[FILTER] size=${session.current.size} pos=${session.current.position} origin=${session.current.origin} brand=${brandForSearch} (isFirst=${isFirstPosition})`);
       const tires = filterTires(session.current.size, session.current.position, brandForSearch, session.current.origin);
       session.current.tires = tires;
@@ -688,8 +694,14 @@ async function handleMessage(userId, incomingText, platform) {
       if (tires.length > 0) {
         const cheapLabel = cheapest ? ' — CLIENTE QUIERE LA MÁS ECONÓMICA, destaca la #1' : '';
         const isTruck    = getRimSize(session.current.size) >= 22.5;
-        const posLabel   = isTruck ? (session.current.position ? ` | Posición: ${session.current.position}` : ' | (sin filtro posición — ES CAMIÓN, pregunta posición)') : ' | AUTOMÓVIL';
-        const mountNote  = isTruck ? '| Monte disponible' : '| NO PRESTAMOS SERVICIO DE MONTE PARA ESTA MEDIDA — no decir que es gratis, decir que no ofrecemos instalación';
+        const posLabel   = isTruck
+          ? (session.current.position
+              ? ` | Posición: ${session.current.position}`
+              : ' | (sin filtro posición — ES CAMIÓN, pregunta posición)')
+          : ' | AUTOMÓVIL';
+        const mountNote = isTruck
+          ? '| Monte disponible'
+          : '| NO PRESTAMOS SERVICIO DE MONTE PARA ESTA MEDIDA — no decir que es gratis, decir que no ofrecemos instalación';
         const list = tires.map((t,i) =>
           `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruck ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
         ).join('\n');
@@ -697,13 +709,11 @@ async function handleMessage(userId, incomingText, platform) {
         const originLabel = session.current.origin ? ` | Origen: ${session.current.origin}` : ' | Sin filtro de origen (mostrar todas las marcas disponibles)';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.current.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
 
-        // Mark this position as shown
         if (session.current.position) session.current.shownPositions.push(session.current.position);
 
-        // If there are more positions to search, do them NOW in the same cycle
+        // Process pending positions in same cycle
         while (session.current.pendingPositions && session.current.pendingPositions.length > 0) {
           const nextPos = session.current.pendingPositions.shift();
-          // Clear brand/origin for subsequent positions
           session.current.position = nextPos;
           session.current.origin   = null;
           session.current.brand    = null;
@@ -720,16 +730,15 @@ async function handleMessage(userId, incomingText, platform) {
           }
           if (session.current.position) session.current.shownPositions.push(session.current.position);
         }
+
         if (!session.current.pendingPositions || session.current.pendingPositions.length === 0) {
           session.current.position = null;
           session.current.origin   = null;
           session.current.brand    = null;
         }
 
-        // Save this search to session history
         saveCurrentSearch(session);
 
-        // Log lead once we have name + search query
         if (!session.logged && session.name) {
           logLead({
             platform,
@@ -740,8 +749,9 @@ async function handleMessage(userId, incomingText, platform) {
           });
           session.logged = true;
         }
+
       } else if (brandForSearch) {
-        // No results with brand filter — retry without brand to show alternatives
+        // No results with brand — retry without brand to show alternatives
         const isTruckRetry = getRimSize(session.current.size) >= 22.5;
         const tiresNoBrand = filterTires(session.current.size, session.current.position, null, session.current.origin);
         if (tiresNoBrand.length > 0) {
@@ -767,37 +777,33 @@ async function handleMessage(userId, incomingText, platform) {
   const qtyMatch   = text.match(/\b([1-9][0-9]?)\s*(llantas?|tires?|ruedas?|unidades?|pcs?)?/i);
   const wantsQuote = /cuanto|precio|total|costo|quote|how much|desglose|calcul|cotiz/i.test(text);
 
-  // Use current search tires, or fall back to last search with results
   const lastSearch = getLastSearch(session);
   const availableTires = session.current.tires.length > 0 ? session.current.tires : (lastSearch ? lastSearch.tires : []);
 
-  // Build combined quote if multiple searches exist and client is requesting final quote
   const wantsFullQuote = /cotiz|total|cuanto|precio|quote|how much|desglose/i.test(text);
   if (wantsFullQuote && session.searches && session.searches.length > 1) {
-    // Build combined quote for all searches
     const combinedLines = ['*COTIZACION COMPLETA*'];
     let grandTotal = 0;
-    const mount = !/sin monte|without mount|no mount|solo llant/i.test(text);
-    const valve = /válvula|valvula|valve|stem/i.test(text);
+    const mount    = !/sin monte|without mount|no mount|solo llant/i.test(text);
+    const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas/i.test(text);
 
     session.searches.forEach(s => {
       if (!s.tires || s.tires.length === 0) return;
-      const tire = s.tires[0]; // use first/cheapest
+      const tire = s.tires[0];
       const qty = (s.pendingQty && Object.values(s.pendingQty).reduce((a,b)=>a+b,0)) || 1;
       const c = calcTotal(tire, qty, mount, valve, disposal);
       combinedLines.push(`*${qty}x ${tire.brand} ${tire.size}${s.position?' '+s.position:''}* — $${c.grand.toFixed(2)}`);
       grandTotal += c.grand;
     });
-    combinedLines.push(`
-*TOTAL GENERAL: $${grandTotal.toFixed(2)}*`);
+    combinedLines.push(`\n*TOTAL GENERAL: $${grandTotal.toFixed(2)}*`);
     if (!mount) combinedLines.push('🚚 Free delivery — área de Miami');
     quoteContext = '\n\n[QUOTE:\n' + combinedLines.join('\n') + ']';
+
   } else if (availableTires.length > 0 && (qtyMatch || wantsQuote)) {
     let tire = availableTires[0];
 
-    // Detect selection: "2", "opción 2", "#2", "el 2", "la 2", brand name
-    const isJustNumber = /^\s*\d+\s*$/.test(text); // message is ONLY a number
+    const isJustNumber = /^\s*\d+\s*$/.test(text);
     const pickMatch = text.match(/(?:número?|opción|el|la|#)\s*([1-9][0-9]?)(?:\s|$)/i) ||
                       (isJustNumber ? text.match(/(\d+)/) : null);
 
@@ -806,21 +812,18 @@ async function handleMessage(userId, incomingText, platform) {
       if (idx >= 0 && idx < availableTires.length) tire = availableTires[idx];
     }
 
-    // Also detect by brand name in text
     const brandPick = availableTires.findIndex(t =>
       t.brand && text.toLowerCase().includes(t.brand.toLowerCase())
     );
     if (brandPick >= 0) tire = session.current.tires[brandPick];
 
-    // Save selection to session so it persists
     if (isJustNumber || pickMatch || brandPick >= 0) {
       const posKey = session.current.shownPositions[session.current.shownPositions.length - 1] || 'default';
       session.selectedTires[posKey] = tire;
     }
 
-    // If message is just a number, use it as selection not quantity
     const totalQty = Object.values(session.current.pendingQty||{}).reduce((a,b)=>a+b,0) || (lastSearch?.qty || 0);
-    const qty = totalQty > 0 ? totalQty : (!isJustNumber && qtyMatch ? parseInt(qtyMatch[1]) : 4);
+    const qty      = totalQty > 0 ? totalQty : (!isJustNumber && qtyMatch ? parseInt(qtyMatch[1]) : 4);
     const mount    = !/sin monte|without mount|no mount|solo llant/i.test(text);
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas|old tires/i.test(text);
@@ -829,22 +832,20 @@ async function handleMessage(userId, incomingText, platform) {
     }
   }
 
-  // ── Email offer — after first quote or inventory shown, once per session ──
+  // ── Email offer ───────────────────────────────────────────────────────────
   let emailOffer = '';
-  // Only offer email after a real quote (not just inventory listing)
   if (!session.emailOffered && !session.email && session.name && quoteContext) {
     emailOffer = '\n[OFFER_EMAIL]';
     session.emailOffered = true;
   }
 
-  // ── Build searches summary ───────────────────────────────────────────────────
+  // ── Searches summary ──────────────────────────────────────────────────────
   let searchesSummary = '';
   if (session.searches && session.searches.length > 0) {
     const summary = session.searches.map(s =>
       `${s.size}${s.position?' '+s.position:''}: ${(s.tires||[]).slice(0,3).map(t=>`${t.brand} $${t.price}`).join(', ')}`
     ).join(' | ');
-    searchesSummary = `
-[BÚSQUEDAS EN SESIÓN: ${summary}]`;
+    searchesSummary = `\n[BÚSQUEDAS EN SESIÓN: ${summary}]`;
   }
 
   // ── Send to Claude ────────────────────────────────────────────────────────
@@ -853,7 +854,6 @@ async function handleMessage(userId, incomingText, platform) {
   session.history.push({ role:'user', content: userMessage });
   if (session.history.length > 6) session.history = session.history.slice(-6);
 
-  // First message — set step to ask for name
   if (session.history.length === 1 && !session.name) session.step = 'name';
 
   const response = await client.messages.create({
@@ -866,7 +866,6 @@ async function handleMessage(userId, incomingText, platform) {
   const reply = response.content[0].text;
   session.history.push({ role:'assistant', content: reply });
 
-  // Log to Google Sheets (non-blocking)
   logConversation({
     platform,
     phone:      session.phone || userId,
