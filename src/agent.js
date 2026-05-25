@@ -763,6 +763,35 @@ async function handleMessage(userId, incomingText, platform) {
         } else {
           inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. No hay stock de esa medida/posición.]`;
         }
+
+        // Always mark this position as shown and process remaining pending positions
+        if (session.current.position) session.current.shownPositions.push(session.current.position);
+
+        while (session.current.pendingPositions && session.current.pendingPositions.length > 0) {
+          const nextPos = session.current.pendingPositions.shift();
+          session.current.position = nextPos;
+          session.current.origin   = null;
+          session.current.brand    = null;
+          session.current.brandOnlyForCurrent = false;
+
+          const nextTires = filterTires(session.current.size, nextPos, null, null);
+          if (nextTires.length > 0) {
+            const isTruckNext = getRimSize(session.current.size) >= 22.5;
+            const nextList = nextTires.map((t,i) =>
+              `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruckNext ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
+            ).join('\n');
+            inventoryContext += `\n\n[INVENTORY DATA POSICIÓN ${nextPos.toUpperCase()}: ${nextTires.length} llanta(s):\n${nextList}]`;
+            session.current.tires = nextTires;
+          }
+          if (session.current.position) session.current.shownPositions.push(session.current.position);
+        }
+
+        // Clear brand/origin after processing all positions
+        session.current.position = null;
+        session.current.origin   = null;
+        session.current.brand    = null;
+        session.current.brandOnlyForCurrent = false;
+
       } else {
         inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. No hay stock de esa medida/posición.]`;
       }
