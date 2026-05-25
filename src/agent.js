@@ -596,17 +596,10 @@ async function handleMessage(userId, incomingText, platform) {
     'Ovation','Itaro','Tornado','Easymax','Jetway','Kobe','Dplus'];
   const brandHit = brands.find(b => text.toLowerCase().includes(b.toLowerCase()));
   if (brandHit) {
-    // Only store brand in session if this is a single-position request
-    // If multiple positions detected in same message, brand only applies to first position
-    // Store it separately so we can apply it only to current search, not pending ones
     const multiPosition = qtyPosMatches && qtyPosMatches.length > 1;
-    if (!multiPosition) {
-      session.current.brand = brandHit;
-    } else {
-      // Multi-position: brand applies only to current search, mark pending as brand-free
-      session.current.brand = brandHit;
-      session.current.brandOnlyForCurrent = true; // flag to clear on next position
-    }
+    // With multiple positions: brand is stored BUT flagged so it only applies to first search
+    session.current.brand = brandHit;
+    session.current.brandOnlyForCurrent = multiPosition;
   }
 
   const cheapest = /económic|econom|cheapest|más barat|barata|menor precio|precio.?más.?bajo/i.test(text);
@@ -649,7 +642,11 @@ async function handleMessage(userId, incomingText, platform) {
       await fetchAllInventory();
       // Don't apply brand to pending positions — only to the position explicitly requested
       const isFirstPosition = !session.current.shownPositions || session.current.shownPositions.length === 0;
-      const brandForSearch = (isFirstPosition || !session.current.brandOnlyForCurrent) ? session.current.brand : null;
+      // brandOnlyForCurrent=true means brand was mentioned alongside other positions
+      // Apply brand ONLY to the first position search, null for all subsequent ones
+      const brandForSearch = session.current.brandOnlyForCurrent && !isFirstPosition
+        ? null
+        : session.current.brand;
       console.log(`[FILTER] size=${session.current.size} pos=${session.current.position} origin=${session.current.origin} brand=${brandForSearch} (isFirst=${isFirstPosition})`);
       const tires = filterTires(session.current.size, session.current.position, brandForSearch, session.current.origin);
       session.current.tires = tires;
@@ -695,8 +692,20 @@ async function handleMessage(userId, incomingText, platform) {
           });
           session.logged = true;
         }
+      } else if (brandForSearch) {
+        // No results with brand filter — retry without brand to show alternatives
+        const tiresNoBrand = filterTires(session.current.size, session.current.position, null, session.current.origin);
+        if (tiresNoBrand.length > 0) {
+          session.current.tires = tiresNoBrand;
+          const list = tiresNoBrand.map((t,i) =>
+            `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruck ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
+          ).join('\n');
+          inventoryContext = `\n\n[INVENTORY DATA: No hay ${brandForSearch} en ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. Alternativas disponibles (${tiresNoBrand.length}):\n${list}]`;
+        } else {
+          inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. No hay stock de esa medida/posición.]`;
+        }
       } else {
-        inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}${session.current.brand?' marca:'+session.current.brand:''}. Invita a continuar por este mismo chat.]`;
+        inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. No hay stock de esa medida/posición.]`;
       }
     } catch (err) {
       console.error('Inventory fetch error:', err.message);
