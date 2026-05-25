@@ -188,6 +188,11 @@ async function fetchAllInventory() {
     if (batch.length < 100) break;
     page++;
   }
+  // Debug: log first product attributes to verify structure
+  if (all.length > 0) {
+    const sample = all[0];
+    console.log('[WC ATTRS]', sample.name, JSON.stringify(sample.attributes?.map(a => ({name:a.name, slug:a.slug, options:a.options}))));
+  }
   cache.data = all.map(p => ({
     id:       p.id,
     name:     p.name,
@@ -205,10 +210,11 @@ async function fetchAllInventory() {
 }
 
 function attr(p, name) {
-  // Match attribute name ignoring accents, case and spaces
-  const normalize = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+  // Match attribute name ignoring accents, case, spaces and pa_ prefix
+  const normalize = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/^pa_/,'').trim();
   const target = normalize(name);
   const a = p.attributes?.find(x => normalize(x.name).includes(target) || normalize(x.slug||'').includes(target));
+  // WooCommerce returns options array for custom attributes
   return a?.options?.[0] || null;
 }
 
