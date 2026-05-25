@@ -20,7 +20,10 @@ const BIZ = {
   freeDeliveryZone: 'área de Miami',
   phone: '+1 (786) 518-5105',  // internal only — do not share in chat
   contactChannel: 'WhatsApp chat',
-  address: '12301 NW 116th Ave, Suite 106, Medley FL 33178',
+  address: '12301 NW 116th Ave, Suite 106, Medley FL 33178',  // warehouse/office
+  serviceAddress: '9710 NW 114 Way Bay#1, Medley FL 33178',      // service center for mounting
+  serviceLat: 25.876764,
+  serviceLng: -80.355644,
   email: 'info@tires-depot.com',
   url: 'https://tires-depot.com/shop/',
   hours: 'Lun–Vie 9am–5pm | Sáb 9am–1pm',
@@ -330,7 +333,7 @@ function formatQuote(tire, qty, withMount) {
   lines.push(`   ━━━━━━━━━━━━━━`);
   lines.push(`   *TOTAL: ${fmt(c.grand)}*`);
   if (!withMount) lines.push(`🚚 Free delivery — área de Miami`);
-  else lines.push(`📍 Instalación en tienda: 12301 NW 116th Ave, Suite 106, Medley FL`);
+  else lines.push(`📍 Centro de servicios: 9710 NW 114 Way Bay#1, Medley FL 33178 | Sin cita previa`);
   return lines.join('\n');
 }
 
@@ -409,10 +412,10 @@ DATOS DEL NEGOCIO:
 - Free delivery en todo ${BIZ.freeDeliveryZone}
 
 REGLAS DE PRECIOS:
-- Tax FL: 7% sobre llantas y válvulas. El monte, descuento y disposición de basura NO llevan tax.
+- Tax FL: 7% sobre llantas y válvulas. El monte, descuento y manejo de basura de llantas viejas NO llevan tax.
 - Monte: ${BIZ.mountStandard}/llanta estándar | ${BIZ.mountLarge}/llanta medidas 385 y 425
 - Válvula: ${BIZ.valve}/llanta — OPCIONAL. Pregunta solo el precio, sin explicar cuándo aplica.
-- Disposición de llantas viejas: ${BIZ.disposal}/llanta — OPCIONAL, SOLO cuando el cliente monta con nosotros en tienda. Si pide delivery, NO mencionar esta opción.
+- Manejo de basura de llantas viejas: ${BIZ.disposal}/llanta — OPCIONAL, SOLO cuando el cliente monta con nosotros en tienda. Si pide delivery, NO mencionar esta opción.
 - Descuento: -${BIZ.mountDiscount}/llanta al montar con nosotros — se descuenta del precio de la llanta, por lo que también reduce la base del tax
 - Free delivery en el área de Miami. Otros condados tienen costo adicional.
 - Pago en efectivo (cash): precio normal, sin descuento
@@ -440,7 +443,7 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
 - Si mencionan marca → filtra por esa marca SOLO cuando está claramente asociada a esa posición. Ejemplo: 'Firestone delantera y 8 traseras' → Firestone SOLO para delantera, para traseras NO hay filtro de marca. Si el [INVENTORY DATA] no trae filtro de marca, muestra TODAS las marcas disponibles.
 - Si mencionan origen (americanas, vietnamitas, brasileñas, japonesas, indias, camboyanas, etc.) → filtra por el país en el nombre del producto. El filtro de origen aplica SOLO a la búsqueda donde el cliente lo mencionó. Si [INVENTORY DATA] dice 'Sin filtro de origen' → muestra TODAS las marcas disponibles sin filtrar por país, aunque el cliente haya pedido americanas en una búsqueda anterior.
 - Cuando el cliente elige llantas para VARIAS POSICIONES → la cotización final debe incluir TODOS los grupos. El tag [BÚSQUEDAS EN SESIÓN] muestra todas las búsquedas. Usa esos datos para presentar una cotización completa con cada grupo detallado y un total general.
-- Pregunta si monta con nosotros o prefiere delivery → si monta: pregunta válvulas ($5/c) y disposición de llantas viejas ($10/c). Si delivery: NO preguntes disposición.
+- Pregunta si monta con nosotros o prefiere delivery → si monta: pregunta válvulas ($5/c) y manejo de basura de llantas viejas ($10/c). Si delivery: NO preguntes disposición.
 - SIEMPRE incluye todas las selecciones previas en la cotización final, no solo la última.
 
 MANEJO DE PREGUNTAS FUERA DEL FLUJO (crítico):
