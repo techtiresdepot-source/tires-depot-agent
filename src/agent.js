@@ -595,14 +595,18 @@ async function handleMessage(userId, incomingText, platform) {
     'Headway','Sunfull','Westlake','Aplus','Speedmax','Driveforce','DRC','JK','Kelly','Lanvigator',
     'Ovation','Itaro','Tornado','Easymax','Jetway','Kobe','Dplus'];
   const brandHit = brands.find(b => text.toLowerCase().includes(b.toLowerCase()));
-  // Only assign brand if there's no pending position queue (single position request)
-  // If client says "Firestone delantera y 8 traseras", brand applies only to delantera
-  const hasPendingPositions = session.current.pendingPositions && session.current.pendingPositions.length > 0;
-  if (brandHit && !hasPendingPositions) session.current.brand = brandHit;
-  if (brandHit && hasPendingPositions) {
-    // Brand mentioned with multiple positions — only apply to current position
-    session.current.brand = brandHit;
-    // Will be cleared when position changes (already handled in position reset)
+  if (brandHit) {
+    // Check if message mentions multiple positions AND brand is explicitly for one of them
+    // e.g. "2 firestone delanteras y 8 de tracción" — Firestone only for delantera
+    const multiPosition = qtyPosMatches && qtyPosMatches.length > 1;
+    if (multiPosition) {
+      // Find which position the brand is associated with
+      // Brand applies only to current position (first one detected), not pending ones
+      session.current.brand = brandHit;
+      // pendingPositions will have brand cleared when position resets (already handled)
+    } else {
+      session.current.brand = brandHit;
+    }
   }
 
   const cheapest = /económic|econom|cheapest|más barat|barata|menor precio|precio.?más.?bajo/i.test(text);
@@ -666,9 +670,11 @@ async function handleMessage(userId, incomingText, platform) {
         if (session.current.pendingPositions.length > 0) {
           session.current.position = session.current.pendingPositions.shift();
           session.current.origin = null; // Clear origin for subsequent positions
+          session.current.brand  = null; // Clear brand — each position is independent
         } else {
           session.current.position = null;
-          session.current.origin = null;
+          session.current.origin   = null;
+          session.current.brand    = null;
         }
 
         // Save this search to session history
