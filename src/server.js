@@ -91,6 +91,10 @@ app.post('/webhook', async (req, res) => {
               console.log(`[WA] ${userId}: ${text}`);
               const reply = await handleMessage(userId, text, 'whatsapp');
               await sendWhatsApp(userId, reply);
+              // Send service center location+photo when client confirms mounting
+              if (/monte|montar|instala/i.test(text) && /centro de servicios|9710|bay#1/i.test(reply)) {
+                await sendServiceCenterInfo(userId).catch(e => console.error('Service center info error:', e.message));
+              }
             } else {
               console.log(`[WA] ${userId}: [${msg.type}]`);
               await sendWhatsApp(userId, MEDIA_REPLY);
@@ -123,6 +127,42 @@ app.post('/webhook', async (req, res) => {
     console.error('Handler error:', err);
   }
 });
+
+// ── Send service center location + photo when client chooses mount ───────────
+async function sendServiceCenterInfo(to) {
+  const token = process.env.META_ACCESS_TOKEN;
+  const phoneId = process.env.WHATSAPP_PHONE_ID;
+  const base = `https://graph.facebook.com/v19.0/${phoneId}`;
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  // Send location
+  await fetch(`${base}/messages`, {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      messaging_product: 'whatsapp', to,
+      type: 'location',
+      location: {
+        latitude: 25.876764,
+        longitude: -80.355644,
+        name: 'Tires Depot Service Center',
+        address: '9710 NW 114 Way Bay#1, Medley FL 33178'
+      }
+    })
+  });
+
+  // Send photo of service center
+  await fetch(`${base}/messages`, {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      messaging_product: 'whatsapp', to,
+      type: 'image',
+      image: {
+        link: 'https://tires-depot.com/wp-content/uploads/2026/05/Centro-de-Servicios-Tires-depot.jpeg',
+        caption: '🔧 Tires Depot Service Center — 9710 NW 114 Way Bay#1, Medley FL 33178 | Lun-Vie 9am-5pm | Sáb 9am-1pm | Sin cita previa'
+      }
+    })
+  });
+}
 
 // ── Leads CSV ─────────────────────────────────────────────────────────────────
 app.get('/leads', (req, res) => {
