@@ -172,7 +172,7 @@ async function logConversation({ platform, phone, name, userMsg, agentReply }) {
 const WC_BASE = process.env.WC_STORE_URL || 'https://tires-depot.com';
 const WC_KEY  = process.env.WC_CONSUMER_KEY;
 const WC_SEC  = process.env.WC_CONSUMER_SECRET;
-const cache   = { data: null, ts: 0, ttl: 5 * 60 * 1000 };
+const cache   = { data: null, ts: 0, ttl: 60 * 1000 }; // 1 min cache
 
 async function fetchAllInventory() {
   if (cache.data && Date.now() - cache.ts < cache.ttl) return cache.data;
@@ -194,8 +194,9 @@ async function fetchAllInventory() {
     price:    parseFloat(p.price) || 0,
     stock:    p.stock_quantity ?? 0,
     inStock:  p.stock_status === 'instock',
+    tags:     p.tags || [],
     size:     attr(p,'tamano') || attr(p,'tamaño') || sizeFromName(p.name),
-    brand:    attr(p,'marca') || brandFromName(p.name),
+    brand:    attr(p,'marca') || brandFromTags(p) || brandFromName(p.name),
     position: attr(p,'position') || posFromName(p.name),
     type:     p.categories?.some(c => c.slug.includes('camion') || c.slug.includes('truck')) ? 'truck' : 'passenger',
   })).filter(p => p.inStock && p.price > 0);
@@ -209,6 +210,24 @@ function attr(p, name) {
   const target = normalize(name);
   const a = p.attributes?.find(x => normalize(x.name).includes(target) || normalize(x.slug||'').includes(target));
   return a?.options?.[0] || null;
+}
+
+function brandFromTags(p) {
+  // Extract brand from WooCommerce product tags
+  // Brands are stored as tags in some WC setups
+  const knownBrands = ['Firestone','Yokohama','Headway','Kinbli','Invovic','Itaro','Dplus',
+    'Dynastone','Kelly','Pirelli','Continental','Falken','DRC','Drc','Hubtrac','Lanvigator',
+    'Ovation','Onix','Westlake','Aplus','Sunfull','Jetway','Kobe','JK'];
+  const tag = p.tags?.find(t => knownBrands.some(b => t.name.toLowerCase().includes(b.toLowerCase())));
+  return tag ? knownBrands.find(b => tag.name.toLowerCase().includes(b.toLowerCase())) : null;
+}
+
+function tagValue(p, name) {
+  // Search in WooCommerce tags (used for brand/size in some setups)
+  const normalize = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+  const target = normalize(name);
+  const tag = p.tags?.find(t => normalize(t.name).includes(target) || normalize(t.slug||'').includes(target));
+  return tag?.name || null;
 }
 function sizeFromName(n) {
   // Last resort: extract size from product name when attribute not present
