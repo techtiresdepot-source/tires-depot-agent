@@ -17,6 +17,7 @@ const BIZ = {
   creditSurcharge: 0.03, // 3% surcharge for credit card payments
   cashDiscount: false,   // no cash discount
   mountDiscount: 5,
+  balancing: 35,       // optional — only for steer/front tires
   freeDeliveryZone: 'área de Miami',
   phone: '+1 (786) 518-5105',  // internal only — do not share in chat
   contactChannel: 'WhatsApp chat',
@@ -296,26 +297,27 @@ function getMountCost(size) {
   return BIZ.largeSizePrefixes.includes(prefix) ? BIZ.mountLarge : BIZ.mountStandard;
 }
 
-function calcTotal(tire, qty, withMount, withValve=false, withDisposal=false) {
+function calcTotal(tire, qty, withMount, withValve=false, withDisposal=false, withBalancing=false) {
   // Override: no mounting service for rims smaller than 22.5
-  if (!offersMounting(tire.size)) { withMount = false; withDisposal = false; }
-  const tireT    = tire.price * qty;
-  const mc       = withMount            ? getMountCost(tire.size) * qty : 0;
-  const vc       = withValve            ? BIZ.valve * qty : 0;
-  const disposal = withDisposal && withMount ? BIZ.disposal * qty : 0;
-  const disc     = withMount            ? BIZ.mountDiscount * qty : 0;
+  if (!offersMounting(tire.size)) { withMount = false; withDisposal = false; withBalancing = false; }
+  const tireT     = tire.price * qty;
+  const mc        = withMount                  ? getMountCost(tire.size) * qty : 0;
+  const vc        = withValve                  ? BIZ.valve * qty : 0;
+  const disposal  = withDisposal && withMount  ? BIZ.disposal * qty : 0;
+  const balancing = withBalancing && withMount ? BIZ.balancing * qty : 0;
+  const disc      = withMount                  ? BIZ.mountDiscount * qty : 0;
   // Discount applies to tire price (not mount)
   // Tax applies to (tires - discount) + valves
   // Mount and disposal have no tax
   const tireTAfterDisc = tireT - disc;
   const taxBase        = tireTAfterDisc + vc;
   const tax            = taxBase * BIZ.taxRate;
-  const grand          = tireTAfterDisc + vc + tax + mc + disposal;
-  return { tireT, mc, vc, disposal, disc, tireTAfterDisc, tax, grand };
+  const grand          = tireTAfterDisc + vc + tax + mc + disposal + balancing;
+  return { tireT, mc, vc, disposal, balancing, disc, tireTAfterDisc, tax, grand };
 }
 
-function formatQuote(tire, qty, withMount) {
-  const c   = calcTotal(tire, qty, withMount);
+function formatQuote(tire, qty, withMount, withValve=false, withDisposal=false, withBalancing=false) {
+  const c   = calcTotal(tire, qty, withMount, withValve, withDisposal, withBalancing);
   const fmt = n => `$${n.toFixed(2)}`;
   const ml  = getMountCost(tire.size) === BIZ.mountLarge ? '$35/llanta (medida especial)' : '$25/llanta';
   const lines = [
@@ -415,7 +417,8 @@ REGLAS DE PRECIOS:
 - Tax FL: 7% sobre llantas y válvulas. El monte, descuento y manejo de basura de llantas viejas NO llevan tax.
 - Monte: ${BIZ.mountStandard}/llanta estándar | ${BIZ.mountLarge}/llanta medidas 385 y 425
 - Válvula: ${BIZ.valve}/llanta — OPCIONAL. Pregunta solo el precio, sin explicar cuándo aplica.
-- Manejo de basura de llantas viejas: ${BIZ.disposal}/llanta — OPCIONAL, SOLO cuando el cliente monta con nosotros en tienda. Si pide delivery, NO mencionar esta opción.
+- Manejo de basura de llantas viejas: ${BIZ.disposal}/llanta — OPCIONAL, solo cuando monta con nosotros.
+- Balanceo: ${BIZ.balancing}/llanta — OPCIONAL, solo para llantas Steer (delanteras), solo cuando monta con nosotros.
 - Descuento: -${BIZ.mountDiscount}/llanta al montar con nosotros — se descuenta del precio de la llanta, por lo que también reduce la base del tax
 - Free delivery en el área de Miami. Otros condados tienen costo adicional.
 - Pago en efectivo (cash): precio normal, sin descuento
