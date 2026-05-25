@@ -496,6 +496,8 @@ async function handleMessage(userId, incomingText, platform) {
   }
   if (!session.current.pendingQty) session.current.pendingQty = {};
   if (!session.current.tires) session.current.tires = [];
+  if (!session.selectedTires) session.selectedTires = {};
+  if (!session.searches) session.searches = [];
 
   // WhatsApp: phone is the userId directly
   if (isWA && !session.phone) session.phone = userId;
