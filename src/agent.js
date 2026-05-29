@@ -837,6 +837,9 @@ async function handleMessage(userId, incomingText, platform) {
 
         if (session.current.position) session.current.shownPositions.push(session.current.position);
 
+        // Save current (first) position search before moving to pending
+        saveCurrentSearch(session);
+
         // Process pending positions in same cycle
         while (session.current.pendingPositions && session.current.pendingPositions.length > 0) {
           const nextPos = session.current.pendingPositions.shift();
@@ -855,6 +858,8 @@ async function handleMessage(userId, incomingText, platform) {
             session.current.tires = nextTires;
           }
           if (session.current.position) session.current.shownPositions.push(session.current.position);
+          // Save each pending position separately
+          saveCurrentSearch(session);
         }
 
         if (!session.current.pendingPositions || session.current.pendingPositions.length === 0) {
@@ -862,8 +867,6 @@ async function handleMessage(userId, incomingText, platform) {
           session.current.origin   = null;
           session.current.brand    = null;
         }
-
-        saveCurrentSearch(session);
 
         // Lead logged only when order is confirmed with full customer data
 
@@ -936,8 +939,10 @@ async function handleMessage(userId, incomingText, platform) {
 
     session.searches.forEach(s => {
       if (!s.tires || s.tires.length === 0) return;
-      const tire = s.tires[0];
-      const qty = (s.pendingQty && Object.values(s.pendingQty).reduce((a,b)=>a+b,0)) || 1;
+      // Use customer's explicit selection if available, otherwise first option
+      const posKey = s.position || 'default';
+      const tire   = session.selectedTires?.[posKey] || s.tires[0];
+      const qty    = s.pendingQty?.[posKey] || (s.pendingQty && Object.values(s.pendingQty).reduce((a,b)=>a+b,0)) || 1;
       const c = calcTotal(tire, qty, mount, valve, disposal);
       combinedLines.push(`*${qty}x ${tire.brand} ${tire.size}${s.position?' '+s.position:''}* — $${c.grand.toFixed(2)}`);
       grandTotal += c.grand;
