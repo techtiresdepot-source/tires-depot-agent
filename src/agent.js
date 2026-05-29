@@ -186,6 +186,15 @@ async function fetchAllInventory() {
     page++;
   }
 
+  // Debug: log stock fields for Firestone products specifically
+  const firestones = all.filter(p => p.name.toUpperCase().includes('FIRESTONE'));
+  if (firestones.length > 0) {
+    firestones.slice(0,3).forEach(p => {
+      console.log(`[FIRESTONE RAW] "${p.name}" stock_status=${p.stock_status} stock_qty=${p.stock_quantity} in_stock=${p.in_stock} manage_stock=${p.manage_stock} purchasable=${p.purchasable} price=${p.price} regular_price=${p.regular_price}`);
+    });
+  } else {
+    console.log('[FIRESTONE RAW] No Firestone products returned from WC API!');
+  }
   // Debug: log ALL attributes of first few products to verify structure
   if (all.length > 0) {
     all.slice(0, 3).forEach(p => {
@@ -204,7 +213,7 @@ async function fetchAllInventory() {
     name:     p.name,
     price:    parseFloat(p.price) || parseFloat(p.regular_price) || parseFloat(p.sale_price) || 0,
     stock:    p.stock_quantity ?? 0,
-    inStock:  p.stock_status === 'instock' || p.stock_status === 'onbackorder' || (p.stock_status == null && (p.stock_quantity ?? 0) > 0) || p.purchasable === true && (p.stock_quantity ?? 0) > 0,
+    inStock:  p.stock_status === 'instock' || p.stock_status === 'onbackorder' || p.in_stock === true || p.purchasable === true || (p.stock_status == null && (p.stock_quantity ?? 0) > 0),
     tags:     p.tags || [],
     size:     attr(p,'tamano') || attr(p,'tamaño') || attr(p,'size') || sizeFromName(p.name),
     brand:    attr(p,'marca') || attr(p,'brand') || attr(p,'pa_brand') || brandFromTags(p) || brandFromName(p.name),
