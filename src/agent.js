@@ -507,7 +507,7 @@ Después pregunta cuántas llantas necesita y si va a montar con nosotros o pref
 ESTILO:
 - Español por defecto. Inglés solo si el cliente escribe en inglés.
 - ULTRA CORTO. Frases sueltas. Máximo 2 líneas. Sin cortesías, sin introducciones, sin despedidas.
-- Si tienes [INVENTORY DATA] → muéstralo directo, sin preámbulo.
+- Si tienes [INVENTORY DATA] → muéstralo directo, sin preámbulo. NUNCA digas 'voy a buscar' o 'espera que busco' si ya tienes [INVENTORY DATA] en el contexto — eso significa que la búsqueda YA se realizó.
 - Sin resultados para marca específica → di que no hay de esa marca y muestra inmediatamente las opciones disponibles de otras marcas para esa medida/posición. No esperes a que el cliente pregunte.
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
 - Si el cliente dice cuántas llantas de cada posición necesita (ej: "2 steer y 8 traction") → muestra primero los resultados de una posición y luego di que buscarás la otra. No preguntes confirmaciones innecesarias.
@@ -759,7 +759,7 @@ async function handleMessage(userId, incomingText, platform) {
           const list = tiresNoBrand.map((t,i) =>
             `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruckRetry ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
           ).join('\n');
-          inventoryContext = `\n\n[INVENTORY DATA: No hay ${brandForSearch} en ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. Alternativas disponibles (${tiresNoBrand.length}):\n${list}]`;
+          inventoryContext = `\n\n[INVENTORY DATA: BÚSQUEDA COMPLETADA — No hay ${brandForSearch} en ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. Búsqueda ya realizada, NO digas que vas a buscar. Muestra AHORA estas alternativas (${tiresNoBrand.length}):\n${list}]`;
         } else {
           inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. No hay stock de esa medida/posición.]`;
         }
