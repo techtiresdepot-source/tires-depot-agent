@@ -213,7 +213,7 @@ async function fetchAllInventory() {
     name:     p.name,
     price:    parseFloat(p.price) || parseFloat(p.regular_price) || parseFloat(p.sale_price) || 0,
     stock:    p.stock_quantity ?? 0,
-    inStock:  p.stock_status === 'instock' || p.stock_status === 'onbackorder' || p.in_stock === true || p.purchasable === true || (p.stock_status == null && (p.stock_quantity ?? 0) > 0),
+    inStock:  p.stock_status === 'instock' || p.in_stock === true || (p.stock_quantity != null && p.stock_quantity > 0),
     tags:     p.tags || [],
     size:     attr(p,'tamano') || attr(p,'tamaño') || attr(p,'size') || sizeFromName(p.name),
     brand:    attr(p,'marca') || attr(p,'brand') || attr(p,'pa_brand') || brandFromTags(p) || brandFromName(p.name),
@@ -224,7 +224,7 @@ async function fetchAllInventory() {
   mapped.filter(p => !p.inStock || p.price <= 0).slice(0,10).forEach(p =>
     console.log(`[FILTERED OUT] "${p.name}" inStock=${p.inStock} price=${p.price} qty=${p.stock} status=${p.stock_status}`)
   );
-  cache.data = mapped.filter(p => p.inStock && p.price > 0);
+  cache.data = mapped.filter(p => (p.inStock || p.stock > 0) && p.price > 0);
   cache.ts = Date.now();
 
   // Debug: log brand resolution for first 5 products
