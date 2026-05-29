@@ -519,12 +519,12 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
 - Si mencionan marca → filtra por esa marca SOLO cuando está claramente asociada a esa posición. Ejemplo: 'Firestone delantera y 8 traseras' → Firestone SOLO para delantera, para traseras NO hay filtro de marca. Si el [INVENTORY DATA] no trae filtro de marca, muestra TODAS las marcas disponibles.
 - Si mencionan origen (americanas, vietnamitas, brasileñas, japonesas, indias, camboyanas, etc.) → filtra por el país en el nombre del producto. El filtro de origen aplica SOLO a la búsqueda donde el cliente lo mencionó. Si [INVENTORY DATA] dice 'Sin filtro de origen' → muestra TODAS las marcas disponibles sin filtrar por país, aunque el cliente haya pedido americanas en una búsqueda anterior.
 - Cuando el cliente elige llantas para VARIAS POSICIONES → la cotización final debe incluir TODOS los grupos. El tag [BÚSQUEDAS EN SESIÓN] muestra todas las búsquedas. Usa esos datos para presentar una cotización completa con cada grupo detallado y un total general.
-- Hay 3 opciones EXCLUYENTES al finalizar una compra:
-  1. *Monta con nosotros* → trae el vehículo, descuento -$5/llanta, pregunta válvulas ($5/c) y manejo de llantas viejas ($10/c)
-  2. *Free delivery* → entrega gratis en área de Miami, sin descuento, sin preguntar disposición
-  3. *Pickup / recoge en tienda* → el cliente viene a buscar las llantas sin montarlas, sin descuento, sin delivery
-- Pregunta siempre: "¿Montas con nosotros, prefieres delivery o pasas a recogerlas?"
-- Si el cliente dice 'llevarme las gomas', 'paso a buscarlas', 'voy a recoger', 'pickup', 'las recojo yo', 'solo quiero las gomas' → es Pickup. No hay delivery ni monte.
+- Hay 3 opciones EXCLUYENTES. Cuando el cliente haya seleccionado marca y cantidad → SIEMPRE pregunta ANTES de mostrar la cotización final: "¿Montas con nosotros (-$5/llanta), prefieres delivery gratis o pasas a recogerlas?"
+  1. *Monta con nosotros* → descuento -$5/llanta, incluye monte en cotización, pregunta válvulas ($5/c) y manejo de llantas viejas ($10/c)
+  2. *Free delivery* → sin monte, sin descuento de monte, free delivery área de Miami
+  3. *Pickup* → sin monte, sin descuento, el cliente recoge en tienda
+- NUNCA incluyas monte en la cotización si el cliente no confirmó explícitamente que va a montar.
+- Si el cliente dice 'llevarme las gomas', 'paso a buscarlas', 'recoger', 'pickup', 'solo quiero las gomas' → es Pickup.
 - SIEMPRE incluye todas las selecciones previas en la cotización final, no solo la última.
 
 MANEJO DE PREGUNTAS FUERA DEL FLUJO (crítico):
@@ -558,6 +558,8 @@ ESTILO:
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
 - Si el cliente dice cuántas llantas de cada posición necesita (ej: "2 steer y 8 traction") → muestra primero los resultados de una posición y luego di que buscarás la otra. No preguntes confirmaciones innecesarias.
 - Cuando el cliente responda con un número después de ver una lista de opciones, interpreta ese número como la SELECCIÓN de esa opción (ej: responde "2" → elige la opción #2 de la lista), NO como cantidad. La cantidad ya se conoce del mensaje inicial.
+- Si hay varias posiciones pendientes: muestra las opciones de una posición → espera que el cliente elija → confirma su elección → ENTONCES muestra las opciones de la siguiente posición. NO asumas ninguna selección que el cliente no haya hecho explícitamente.
+- Si una posición tiene varias opciones (ej: 2 Firestone diferentes), el cliente DEBE elegir cuál antes de continuar. No tomes la primera por defecto.
 
 IMPORTANTE: Los tags [INVENTORY DATA:], [QUOTE:], [CUSTOMER NAME:], etc. son instrucciones internas — NUNCA los copies literalmente en tu respuesta al cliente. Usa su contenido para formular tu respuesta.
 
@@ -859,7 +861,7 @@ async function handleMessage(userId, incomingText, platform) {
   if (wantsFullQuote && session.searches && session.searches.length > 1) {
     const combinedLines = ['*COTIZACION COMPLETA*'];
     let grandTotal = 0;
-    const mount    = !/sin monte|without mount|no mount|solo llant|recoger|pickup|paso a buscar|me las llevo|llevarme/i.test(text);
+    const mount    = /\bmonte\b|\bmontar\b|\bmounting\b|monta con|instalaci/i.test(text) && !/sin monte|no monte|without mount|no mount/i.test(text);
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas/i.test(text);
 
@@ -899,7 +901,7 @@ async function handleMessage(userId, incomingText, platform) {
 
     const totalQty = Object.values(session.current.pendingQty||{}).reduce((a,b)=>a+b,0) || (lastSearch?.qty || 0);
     const qty      = totalQty > 0 ? totalQty : (!isJustNumber && qtyMatch ? parseInt(qtyMatch[1]) : 4);
-    const mount    = !/sin monte|without mount|no mount|solo llant|recoger|pickup|paso a buscar|me las llevo|llevarme/i.test(text);
+    const mount    = /\bmonte\b|\bmontar\b|\bmounting\b|monta con|instalaci/i.test(text) && !/sin monte|no monte|without mount|no mount/i.test(text);
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas|old tires/i.test(text);
     if (qty >= 1 && qty <= 24) {
