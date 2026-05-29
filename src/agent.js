@@ -539,6 +539,9 @@ PASO 4 — CONFIRMACIÓN Y DATOS DEL CLIENTE:
   4. Teléfono — ya lo tienes en [CUSTOMER PHONE], no lo pidas
   5. Correo electrónico
 - Pide los 4 datos faltantes (nombre, empresa, dirección, email) en un solo mensaje.
+- Cuando el cliente confirme sus datos: muestra el resumen del pedido, agrega una frase breve de agradecimiento y pregunta: "¿Deseas recibir nuestras promociones semanales por email?" (o similar, natural y breve). NO agregues nada más.
+- Si el cliente acepta recibir promociones → confirma con un mensaje corto. El sistema lo registrará automáticamente.
+- Si el cliente declina → acepta sin insistir.
 
 PASO 5 — OFERTA DE EMAIL (solo si [OFFER_EMAIL]):
 - Después de mostrar cotización o resultados, si ves [OFFER_EMAIL] → invita al cliente a registrar su email para recibir la *Llanta de la Semana* con precios especiales. Hazlo de forma breve y no invasiva. Si dice que no → acepta y continúa normalmente.
@@ -642,6 +645,46 @@ async function handleMessage(userId, incomingText, platform) {
       session.email = extracted;
       updateLeadEmail(session.phone || userId, session.email);
       console.log(`[EMAIL] ${session.name} | ${session.email}`);
+    }
+  }
+
+  // ── Log lead when order confirmed (email provided in confirmation flow) ───
+  const emailInText = extractEmail(text);
+  if (!session.logged && session.name && emailInText && text.length < 120) {
+    // Short message with email = customer providing order confirmation data
+    logLead({
+      platform,
+      phone: session.phone || userId,
+      name:  session.name,
+      email: emailInText,
+      query: [session.searches?.map(s => `${s.size} ${s.position||''}`).join(' | ') || ''].join(''),
+    });
+    session.logged = true;
+    session.orderEmail = emailInText;
+    console.log(`[ORDER CONFIRMED] ${session.name} | ${session.phone} | ${emailInText}`);
+  }
+
+  // ── Detect promo subscription consent ────────────────────────────────────
+  const acceptedPromo = /\bsi\b|\byes\b|claro|dale|por supuesto|me apunto|suscrib|quiero|ok|bueno/i.test(text);
+  const declinedPromo = /no\b|no gracias|no,|paso/i.test(text);
+  if (session.logged && session.orderEmail && !session.promoAnswered) {
+    if (acceptedPromo) {
+      session.promoSubscribed = true;
+      session.promoAnswered   = true;
+      // Append subscription flag to lead log
+      const promoEmail = session.orderEmail;
+      const promoName  = session.name || '';
+      const promoPhone = session.phone || userId;
+      try {
+        fs.appendFileSync(LOG_FILE,
+          `"${new Date().toISOString()}","promo_subscribe","${promoPhone}","${promoName}","${promoEmail}","SUBSCRIBED_PROMO"
+`,
+          'utf8');
+        console.log(`[PROMO SUBSCRIBE] ${promoName} | ${promoEmail}`);
+      } catch(e) { console.error('Promo log error:', e.message); }
+    } else if (declinedPromo) {
+      session.promoAnswered = true;
+      console.log(`[PROMO DECLINED] ${session.name}`);
     }
   }
 
@@ -787,16 +830,7 @@ async function handleMessage(userId, incomingText, platform) {
 
         saveCurrentSearch(session);
 
-        if (!session.logged && session.name) {
-          logLead({
-            platform,
-            phone: session.phone || userId,
-            name:  session.name,
-            email: session.email || '',
-            query: `${session.current.size} ${session.current.position||''} ${session.current.brand||''}`.trim(),
-          });
-          session.logged = true;
-        }
+        // Lead logged only when order is confirmed with full customer data
 
       } else if (brandForSearch) {
         // No results with brand — retry without brand to show alternatives
