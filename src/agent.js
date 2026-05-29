@@ -102,7 +102,7 @@ function updateLeadEmail(phone, email) {
 
 // ── Google Sheets conversation logger ───────────────────────────────────────
 const SHEET_ID  = process.env.GOOGLE_SHEET_ID;
-const SHEET_TAB = 'Conversaciones';
+const SHEET_LEADS_TAB  = 'Pedidos';
 
 let sheetsClient = null;
 
@@ -119,51 +119,57 @@ async function getSheetsClient() {
   return sheetsClient;
 }
 
-async function ensureSheetHeaders() {
+// Google Sheets — only confirmed orders are logged (Pedidos tab)
+
+async function ensureLeadsSheetHeaders() {
   try {
     const sheets = await getSheetsClient();
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: `${SHEET_TAB}!A1:G1`,
+      range: `${SHEET_LEADS_TAB}!A1:J1`,
     });
     if (!res.data.values || res.data.values.length === 0) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,
-        range: `${SHEET_TAB}!A1`,
+        range: `${SHEET_LEADS_TAB}!A1`,
         valueInputOption: 'RAW',
-        requestBody: { values: [['fecha','canal','telefono','nombre','mensaje_cliente','respuesta_agente']] },
+        requestBody: { values: [['fecha','nombre','empresa','direccion','telefono','email','pedido','total','modalidad','promo']] },
       });
     }
   } catch (e) {
-    console.error('Sheet header error:', e.message);
+    console.error('Leads sheet header error:', e.message);
   }
 }
+ensureLeadsSheetHeaders().catch(() => {});
 
-// Initialize headers on startup
-ensureSheetHeaders().catch(() => {});
-
-async function logConversation({ platform, phone, name, userMsg, agentReply }) {
+async function logOrderToSheet({ name, company, address, phone, email, order, total, modalidad, promo }) {
   try {
     const sheets = await getSheetsClient();
     const row = [
       new Date().toISOString(),
-      platform || '',
-      phone    || '',
-      name     || '',
-      (userMsg    || '').substring(0, 500),
-      (agentReply || '').substring(0, 500),
+      name      || '',
+      company   || '',
+      address   || '',
+      phone     || '',
+      email     || '',
+      (order    || '').substring(0, 300),
+      total     || '',
+      modalidad || '',
+      promo     || 'no',
     ];
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: `${SHEET_TAB}!A:F`,
+      range: `${SHEET_LEADS_TAB}!A:J`,
       valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [row] },
     });
+    console.log(`[SHEET ORDER] ${name} | ${email} | ${total}`);
   } catch (e) {
-    console.error('Sheet log error:', e.message);
+    console.error('Order sheet log error:', e.message);
   }
 }
+
 
 // ── WooCommerce inventory ───────────────────────────────────────────────────
 const WC_BASE = process.env.WC_STORE_URL || 'https://tires-depot.com';
@@ -648,19 +654,39 @@ async function handleMessage(userId, incomingText, platform) {
     }
   }
 
-  // ── Log lead when order confirmed (email provided in confirmation flow) ───
+  // ── Log order when customer provides confirmation data (name + email in same msg) ──
   const emailInText = extractEmail(text);
-  if (!session.logged && session.name && emailInText && text.length < 120) {
-    // Short message with email = customer providing order confirmation data
-    logLead({
-      platform,
-      phone: session.phone || userId,
-      name:  session.name,
-      email: emailInText,
-      query: [session.searches?.map(s => `${s.size} ${s.position||''}`).join(' | ') || ''].join(''),
-    });
-    session.logged = true;
+  if (!session.logged && session.name && emailInText && text.length < 200) {
     session.orderEmail = emailInText;
+
+    // Extract order summary from session searches
+    const orderLines = (session.searches || []).map(s => {
+      const qty = s.pendingQty ? Object.values(s.pendingQty).reduce((a,b)=>a+b,0) : '';
+      const tire = s.tires?.[0];
+      return tire ? `${qty}x ${tire.brand} ${tire.size}${s.position?' '+s.position:''}` : '';
+    }).filter(Boolean).join(' | ');
+
+    // Detect modalidad from session
+    const modalidad = session.modalidad || 'pendiente';
+
+    // Extract company and address from text (best effort)
+    const textParts = text.split(/[\n,]/).map(p => p.trim()).filter(Boolean);
+    const addrPart  = textParts.find(p => /calle|ave|blvd|street|drive|court|way|rd|st|\d{3,}/i.test(p)) || '';
+    const compPart  = textParts.find(p => /llc|inc|corp|company|empresa|group|s\.a\.|trucking/i.test(p)) || '';
+
+    logOrderToSheet({
+      name:      session.name,
+      company:   compPart,
+      address:   addrPart,
+      phone:     session.phone || userId,
+      email:     emailInText,
+      order:     orderLines,
+      total:     '',
+      modalidad,
+      promo:     'pendiente',
+    }).catch(() => {});
+
+    session.logged = true;
     console.log(`[ORDER CONFIRMED] ${session.name} | ${session.phone} | ${emailInText}`);
   }
 
@@ -686,6 +712,15 @@ async function handleMessage(userId, incomingText, platform) {
       session.promoAnswered = true;
       console.log(`[PROMO DECLINED] ${session.name}`);
     }
+  }
+
+  // ── Detect delivery modalidad ────────────────────────────────────────────
+  if (/\bmonte\b|\bmontar\b|monta con/i.test(text) && !/sin monte|no monte/i.test(text)) {
+    session.modalidad = 'monte';
+  } else if (/delivery|envio|envío|deliver/i.test(text)) {
+    session.modalidad = 'delivery';
+  } else if (/recoger|pickup|paso a buscar|me las llevo|llevarme/i.test(text)) {
+    session.modalidad = 'pickup';
   }
 
   // ── Detect tire search params ─────────────────────────────────────────────
@@ -982,13 +1017,7 @@ async function handleMessage(userId, incomingText, platform) {
   const reply = response.content[0].text;
   session.history.push({ role:'assistant', content: reply });
 
-  logConversation({
-    platform,
-    phone:      session.phone || userId,
-    name:       session.name  || '',
-    userMsg:    text,
-    agentReply: reply,
-  }).catch(() => {});
+
 
   return reply;
 }
