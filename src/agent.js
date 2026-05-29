@@ -703,7 +703,7 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   // Detect qty per position
-  const qtyPosMatches = [...text.matchAll(/(\d+)\s*(?:de\s+)?(?:llantas?\s+)?(?:de\s+)?(direccion|dirección|delantera|steer|traction|traccion|trasera|atrás|atras|trailer|remolque)/gi)];
+  const qtyPosMatches = [...text.matchAll(/(\d+)\s*(?:de\s+)?(?:llantas?\s+)?(?:de\s+|para\s+)?(direccion|dirección|delantera|adelante|delantero|frontal|steer|traction|traccion|tracción|trasera|atrás|atras|trailer|remolque)/gi)];
   if (qtyPosMatches.length > 0) {
     qtyPosMatches.forEach(m => {
       const qty = parseInt(m[1]);
@@ -933,7 +933,12 @@ async function handleMessage(userId, incomingText, platform) {
       session.selectedTires[posKey] = tire;
     }
 
-    const totalQty = Object.values(session.current.pendingQty||{}).reduce((a,b)=>a+b,0) || (lastSearch?.qty || 0);
+    // Use qty for the last shown position specifically, not the total of all positions
+    const lastPos = session.current.shownPositions[session.current.shownPositions.length - 1];
+    const posQty  = lastPos && session.current.pendingQty?.[lastPos]
+      ? session.current.pendingQty[lastPos]
+      : null;
+    const totalQty = posQty || Object.values(session.current.pendingQty||{}).reduce((a,b)=>a+b,0) || (lastSearch?.qty || 0);
     const qty      = totalQty > 0 ? totalQty : (!isJustNumber && qtyMatch ? parseInt(qtyMatch[1]) : 4);
     const mount    = /\bmonte\b|\bmontar\b|\bmounting\b|monta con|instalaci/i.test(text) && !/sin monte|no monte|without mount|no mount/i.test(text);
     const valve    = /válvula|valvula|valve|stem/i.test(text);
