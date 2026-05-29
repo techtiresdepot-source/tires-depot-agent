@@ -199,10 +199,10 @@ async function fetchAllInventory() {
     });
   }
 
-  cache.data = all.map(p => ({
+  const mapped = all.map(p => ({
     id:       p.id,
     name:     p.name,
-    price:    parseFloat(p.price) || 0,
+    price:    parseFloat(p.price) || parseFloat(p.regular_price) || parseFloat(p.sale_price) || 0,
     stock:    p.stock_quantity ?? 0,
     inStock:  p.stock_status === 'instock',
     tags:     p.tags || [],
@@ -210,7 +210,12 @@ async function fetchAllInventory() {
     brand:    attr(p,'marca') || attr(p,'brand') || attr(p,'pa_brand') || brandFromTags(p) || brandFromName(p.name),
     position: attr(p,'position') || attr(p,'posicion') || attr(p,'posición') || posFromName(p.name),
     type:     p.categories?.some(c => c.slug.includes('camion') || c.slug.includes('truck')) ? 'truck' : 'passenger',
-  })).filter(p => p.inStock && p.price > 0);
+  }));
+  // Debug: log products being filtered out
+  mapped.filter(p => !p.inStock || p.price <= 0).slice(0,10).forEach(p =>
+    console.log(`[FILTERED OUT] "${p.name}" inStock=${p.inStock} price=${p.price} status=${p.stock_status}`)
+  );
+  cache.data = mapped.filter(p => p.inStock && p.price > 0);
   cache.ts = Date.now();
 
   // Debug: log brand resolution for first 5 products
