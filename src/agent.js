@@ -177,7 +177,7 @@ async function fetchAllInventory() {
   const all  = [];
   let page   = 1;
   while (true) {
-    const res   = await fetch(`${WC_BASE}/wp-json/wc/v3/products?per_page=100&page=${page}&status=publish`, { headers: { Authorization: `Basic ${auth}` } });
+    const res   = await fetch(`${WC_BASE}/wp-json/wc/v3/products?per_page=100&page=${page}&status=publish&_fields=id,name,price,regular_price,sale_price,stock_status,stock_quantity,in_stock,manage_stock,purchasable,tags,attributes,categories,meta_data`, { headers: { Authorization: `Basic ${auth}` } });
     if (!res.ok) throw new Error(`WC API error: ${res.status}`);
     const batch = await res.json();
     if (!batch.length) break;
@@ -190,7 +190,7 @@ async function fetchAllInventory() {
   const firestones = all.filter(p => p.name.toUpperCase().includes('FIRESTONE'));
   if (firestones.length > 0) {
     firestones.slice(0,3).forEach(p => {
-      console.log(`[FIRESTONE RAW] "${p.name}" stock_status=${p.stock_status} stock_qty=${p.stock_quantity} in_stock=${p.in_stock} manage_stock=${p.manage_stock} purchasable=${p.purchasable} price=${p.price} regular_price=${p.regular_price}`);
+      console.log(`[FIRESTONE RAW] "${p.name}" stock_status=${p.stock_status} stock_qty=${p.stock_quantity} meta_stock=${stockFromMeta(p)} price=${p.price} regular_price=${p.regular_price}`);
     });
   } else {
     console.log('[FIRESTONE RAW] No Firestone products returned from WC API!');
@@ -212,8 +212,8 @@ async function fetchAllInventory() {
     id:       p.id,
     name:     p.name,
     price:    parseFloat(p.price) || parseFloat(p.regular_price) || parseFloat(p.sale_price) || 0,
-    stock:    p.stock_quantity ?? 0,
-    inStock:  p.stock_status === 'instock' || p.in_stock === true || (p.stock_quantity != null && p.stock_quantity > 0),
+    stock:    (p.stock_quantity ?? 0) || stockFromMeta(p),
+    inStock:  p.stock_status === 'instock' || p.in_stock === true || (p.stock_quantity != null && p.stock_quantity > 0) || stockFromMeta(p) > 0,
     tags:     p.tags || [],
     size:     attr(p,'tamano') || attr(p,'tamaño') || attr(p,'size') || sizeFromName(p.name),
     brand:    attr(p,'marca') || attr(p,'brand') || attr(p,'pa_brand') || brandFromTags(p) || brandFromName(p.name),
@@ -233,6 +233,20 @@ async function fetchAllInventory() {
   });
 
   return cache.data;
+}
+
+// ── Stock from bodega meta fields ───────────────────────────────────────────
+// Stock is stored in custom meta fields _stock_bodega1, _stock_bodega2, _stock_bodega3
+function stockFromMeta(p) {
+  const meta = p.meta_data || [];
+  let total = 0;
+  for (const m of meta) {
+    if (m.key && m.key.startsWith('_stock_')) {
+      const qty = parseInt(m.value) || 0;
+      total += qty;
+    }
+  }
+  return total;
 }
 
 // ── attr(): find a WooCommerce product attribute by name/slug ───────────────
