@@ -530,7 +530,17 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
 MANEJO DE PREGUNTAS FUERA DEL FLUJO (crítico):
 - Si el cliente pregunta algo general (monte, válvula, delivery, financiación, ubicación) mientras ya hay una búsqueda activa → responde brevemente y LUEGO retoma: si ya mostraste opciones di "Retomando tu búsqueda, ¿cuál de estas opciones prefieres?" y repite la lista. NUNCA pidas de nuevo la medida o posición si ya las tienes.
 
-PASO 4 — OFERTA DE EMAIL (solo si [OFFER_EMAIL]):
+PASO 4 — CONFIRMACIÓN Y DATOS DEL CLIENTE:
+- Después de mostrar cotización final → pregunta: "¿Confirmamos el pedido?"
+- Si el cliente confirma → solicita en UN SOLO mensaje los datos faltantes para la factura:
+  1. Nombre completo (siempre pedirlo — el nombre de WhatsApp puede ser apodo o empresa, no es confiable)
+  2. Empresa (si aplica)
+  3. Dirección completa (siempre necesaria para la factura, independientemente de si es pickup, delivery o monte)
+  4. Teléfono — ya lo tienes en [CUSTOMER PHONE], no lo pidas
+  5. Correo electrónico
+- Pide los 4 datos faltantes (nombre, empresa, dirección, email) en un solo mensaje.
+
+PASO 5 — OFERTA DE EMAIL (solo si [OFFER_EMAIL]):
 - Después de mostrar cotización o resultados, si ves [OFFER_EMAIL] → invita al cliente a registrar su email para recibir la *Llanta de la Semana* con precios especiales. Hazlo de forma breve y no invasiva. Si dice que no → acepta y continúa normalmente.
 
 FORMATO LISTA:
@@ -849,7 +859,7 @@ async function handleMessage(userId, incomingText, platform) {
   if (wantsFullQuote && session.searches && session.searches.length > 1) {
     const combinedLines = ['*COTIZACION COMPLETA*'];
     let grandTotal = 0;
-    const mount    = !/sin monte|without mount|no mount|solo llant/i.test(text);
+    const mount    = !/sin monte|without mount|no mount|solo llant|recoger|pickup|paso a buscar|me las llevo|llevarme/i.test(text);
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas/i.test(text);
 
@@ -889,7 +899,7 @@ async function handleMessage(userId, incomingText, platform) {
 
     const totalQty = Object.values(session.current.pendingQty||{}).reduce((a,b)=>a+b,0) || (lastSearch?.qty || 0);
     const qty      = totalQty > 0 ? totalQty : (!isJustNumber && qtyMatch ? parseInt(qtyMatch[1]) : 4);
-    const mount    = !/sin monte|without mount|no mount|solo llant/i.test(text);
+    const mount    = !/sin monte|without mount|no mount|solo llant|recoger|pickup|paso a buscar|me las llevo|llevarme/i.test(text);
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas|old tires/i.test(text);
     if (qty >= 1 && qty <= 24) {
