@@ -454,7 +454,9 @@ function saveCurrentSearch(session) {
   const key = [session.current.size, session.current.position, session.current.origin, session.current.brand]
     .filter(Boolean).join('|');
   const existing = session.searches.findIndex(s => s.key === key);
-  const entry = { ...session.current, key };
+  // Store position-specific qty directly on the entry
+  const posQty = session.current.pendingQty?.[session.current.position] || null;
+  const entry = { ...session.current, key, positionQty: posQty };
   if (existing >= 0) session.searches[existing] = entry;
   else session.searches.push(entry);
 }
@@ -616,13 +618,20 @@ async function handleMessage(userId, incomingText, platform) {
     const savedName  = session.name;
     const savedPhone = session.phone;
     const savedEmail = session.email;
+    const savedSearches       = session.searches       || [];
+    const savedSelectedTires  = session.selectedTires  || {};
+    const savedLastQuoteTotal = session.lastQuoteTotal || null;
+    const savedModalidad      = session.modalidad      || null;
     sessions.set(userId, {
       history: [], tires: [], size: null, position: null,
       pendingPositions: [], shownPositions: [], pendingQty: {},
       origin: null, brand: null,
       name: savedName, phone: savedPhone, email: savedEmail,
       step: 'searching', logged: false, emailOffered: false,
-      modalidad: session.modalidad || null,
+      searches:       savedSearches,
+      selectedTires:  savedSelectedTires,
+      lastQuoteTotal: savedLastQuoteTotal,
+      modalidad:      savedModalidad,
     });
     return handleMessage(userId, text, platform);
   }
@@ -663,11 +672,9 @@ async function handleMessage(userId, incomingText, platform) {
     const orderLines = (session.searches || []).map(s => {
       const posKey = s.position || 'default';
       const tire   = session.selectedTires?.[posKey] || s.tires?.[0];
-      // Use position-specific qty: steer→2, traction→8 etc.
-      const qtyForPos = s.pendingQty && s.position
-        ? (s.pendingQty[s.position] || null)
-        : null;
-      const qty = qtyForPos
+      // Use explicit per-position qty saved at search time
+      const qty = s.positionQty
+        || (s.pendingQty && s.position ? s.pendingQty[s.position] : null)
         || (s.pendingQty ? Object.values(s.pendingQty).find(v => v > 0) : null)
         || 1;
       return tire ? `${qty}x ${tire.brand} ${tire.size}${s.position ? ' ' + s.position : ''}` : '';
@@ -931,12 +938,19 @@ async function handleMessage(userId, incomingText, platform) {
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas/i.test(text);
 
+    const seenKeys = new Set();
     session.searches.forEach(s => {
       if (!s.tires || s.tires.length === 0) return;
-      // Use customer's explicit selection if available, otherwise first option
+      // Deduplicate by position
+      const dedupeKey = s.position || s.key || 'default';
+      if (seenKeys.has(dedupeKey)) return;
+      seenKeys.add(dedupeKey);
       const posKey = s.position || 'default';
       const tire   = session.selectedTires?.[posKey] || s.tires[0];
-      const qty    = s.pendingQty?.[posKey] || (s.pendingQty && Object.values(s.pendingQty).reduce((a,b)=>a+b,0)) || 1;
+      const qty    = s.positionQty
+        || (s.pendingQty && s.position ? s.pendingQty[s.position] : null)
+        || (s.pendingQty ? Object.values(s.pendingQty).find(v => v > 0) : null)
+        || 1;
       const c = calcTotal(tire, qty, mount, valve, disposal);
       combinedLines.push(`*${qty}x ${tire.brand} ${tire.size}${s.position?' '+s.position:''}* — $${c.grand.toFixed(2)}`);
       grandTotal += c.grand;
