@@ -650,7 +650,7 @@ async function handleMessage(userId, incomingText, platform) {
 
   // ── Capture order confirmation data (name + email in same msg) ─────────────
   const emailInText = extractEmail(text);
-  if (!session.pendingOrder && session.name && emailInText && text.length < 200) {
+  if (!session.pendingOrder && emailInText && text.length < 200) {
     session.orderEmail = emailInText;
 
     // Extract full name from first item in confirmation message
@@ -674,6 +674,9 @@ async function handleMessage(userId, incomingText, platform) {
     }).filter(Boolean).join(' | ');
 
     // Store pending order — written to sheet after promo answer
+    // Update session name with full name from confirmation
+    if (namePart && namePart.length > 1) session.name = namePart;
+
     session.pendingOrder = {
       name:      namePart,
       company:   compPart,
@@ -986,7 +989,7 @@ async function handleMessage(userId, incomingText, platform) {
 
   // ── Email offer ───────────────────────────────────────────────────────────
   let emailOffer = '';
-  if (!session.emailOffered && !session.email && session.name && quoteContext) {
+  if (!session.emailOffered && !session.email && quoteContext) {
     emailOffer = '\n[OFFER_EMAIL]';
     session.emailOffered = true;
   }
