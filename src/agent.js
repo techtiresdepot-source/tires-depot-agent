@@ -509,8 +509,8 @@ ${FINANCE_OPTIONS.map(f => `- ${f.name}: ${f.note}`).join('\n')}
 
 FLUJO DE CONVERSACIÓN — sigue este orden estricto:
 
-PASO 1 — SALUDO Y NOMBRE (SIEMPRE PRIMERO):
-- Si no ves [CUSTOMER NAME] en el contexto → el PRIMER mensaje que envíes SIEMPRE debe ser un saludo de bienvenida a Tires Depot y pedir el nombre. No preguntes por llantas hasta tener el nombre.
+PASO 1 — SALUDO (SIEMPRE PRIMERO):
+- El PRIMER mensaje SIEMPRE es un saludo breve de bienvenida a Tires Depot y preguntar directamente qué medida de llanta necesita. NO pidas el nombre — se obtiene automáticamente del contacto de WhatsApp.
 
 PASO 2 — TELÉFONO (solo si [NEEDS_PHONE]):
 - Si ves [NEEDS_PHONE] en el contexto → pide el número de teléfono antes de continuar
@@ -627,14 +627,7 @@ async function handleMessage(userId, incomingText, platform) {
     return handleMessage(userId, text, platform);
   }
 
-  // ── Capture name if we asked last turn ───────────────────────────────────
-  if (!session.name && session.step === 'name') {
-    const extracted = extractName(text);
-    if (extracted) {
-      session.name = extracted;
-      session.step = isWA ? 'searching' : 'phone';
-    }
-  }
+  // Name comes from WhatsApp contact — no need to ask
 
   // ── Capture phone (non-WA) ───────────────────────────────────────────────
   if (!isWA && !session.phone && session.step === 'phone') {
@@ -663,15 +656,20 @@ async function handleMessage(userId, incomingText, platform) {
     // Extract full name from first item in confirmation message
     const textParts = text.split(/[\n,]/).map(p => p.trim()).filter(Boolean);
     const namePart  = textParts.find(p => !/@/.test(p) && p.length > 2 && !/calle|ave|blvd|street|\d{5}/i.test(p)) || session.name;
-    const addrPart  = textParts.find(p => /calle|ave|blvd|street|drive|court|way|\d{3,}/i.test(p)) || '';
+    const addrPart  = (textParts.find(p => /calle|ave|blvd|street|drive|court|way|\d{3,}/i.test(p)) || '').replace(/\S+@\S+/g, '').trim();
     const compPart  = textParts.find(p => /llc|inc|corp|company|empresa|group|s\.a\.|trucking|independiente/i.test(p)) || '';
 
     // Build order lines using selectedTires with correct qty per position
     const orderLines = (session.searches || []).map(s => {
       const posKey = s.position || 'default';
       const tire   = session.selectedTires?.[posKey] || s.tires?.[0];
-      const qty    = s.pendingQty?.[s.position]
-        || (s.pendingQty ? Object.values(s.pendingQty).reduce((a,b)=>a+b,0) : 1);
+      // Use position-specific qty: steer→2, traction→8 etc.
+      const qtyForPos = s.pendingQty && s.position
+        ? (s.pendingQty[s.position] || null)
+        : null;
+      const qty = qtyForPos
+        || (s.pendingQty ? Object.values(s.pendingQty).find(v => v > 0) : null)
+        || 1;
       return tire ? `${qty}x ${tire.brand} ${tire.size}${s.position ? ' ' + s.position : ''}` : '';
     }).filter(Boolean).join(' | ');
 
@@ -705,6 +703,16 @@ async function handleMessage(userId, incomingText, platform) {
       console.log(`[SHEET WRITE] ${session.pendingOrder.name} | promo=${promoVal}`);
     }
   }
+
+  // ── Detect delivery modalidad ────────────────────────────────────────────
+  if (/\bmonte\b|\bmontar\b|monta con nosotros/i.test(text) && !/sin monte|no monte/i.test(text)) {
+    session.modalidad = 'monte';
+  } else if (/\bdelivery\b|\benvio\b|\benvío\b|\bdeliver\b/i.test(text)) {
+    session.modalidad = 'delivery';
+  } else if (/recoger|pickup|paso a buscar|me las llevo|llevarme|solo quiero las gomas|solo quiero llevarme/i.test(text)) {
+    session.modalidad = 'pickup';
+  }
+  if (session.modalidad) console.log(`[MODALIDAD] ${session.modalidad} | "${text.substring(0,50)}"`);
 
   // ── Detect tire search params ─────────────────────────────────────────────
   const sizeMatch = text.match(/(\d{2,3}[\/]\d{2,3}[\/rR]\d{2}[\w.]*|\d{2,3}[\/\\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*|\d{2}[rR]\d{2}\.?\d*)/i);
@@ -912,7 +920,7 @@ async function handleMessage(userId, incomingText, platform) {
   const lastSearch = getLastSearch(session);
   const availableTires = session.current.tires.length > 0 ? session.current.tires : (lastSearch ? lastSearch.tires : []);
 
-  const wantsFullQuote = /cotiz|total|cuanto|precio|quote|how much|desglose/i.test(text);
+  const wantsFullQuote = /cotiz|total|cuanto|precio|quote|how much|desglose|\bmonte\b|\bmontar\b|delivery|recoger|pickup|paso a|llevarme|envio|envío/i.test(text);
   if (wantsFullQuote && session.searches && session.searches.length > 1) {
     const combinedLines = ['*COTIZACION COMPLETA*'];
     let grandTotal = 0;
@@ -998,7 +1006,7 @@ async function handleMessage(userId, incomingText, platform) {
   session.history.push({ role:'user', content: userMessage });
   if (session.history.length > 6) session.history = session.history.slice(-6);
 
-  if (session.history.length === 1 && !session.name) session.step = 'name';
+  // step management — no longer ask for name
 
   const response = await client.messages.create({
     model:      'claude-haiku-4-5-20251001',
