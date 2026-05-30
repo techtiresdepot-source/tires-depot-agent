@@ -622,6 +622,7 @@ async function handleMessage(userId, incomingText, platform) {
       origin: null, brand: null,
       name: savedName, phone: savedPhone, email: savedEmail,
       step: 'searching', logged: false, emailOffered: false,
+      modalidad: session.modalidad || null,
     });
     return handleMessage(userId, text, platform);
   }
@@ -930,6 +931,7 @@ async function handleMessage(userId, incomingText, platform) {
       grandTotal += c.grand;
     });
     combinedLines.push(`\n*TOTAL GENERAL: $${grandTotal.toFixed(2)}*`);
+    session.lastQuoteTotal = grandTotal.toFixed(2); // store for order logging
     if (!mount) combinedLines.push('🚚 Free delivery — área de Miami');
     quoteContext = '\n\n[QUOTE:\n' + combinedLines.join('\n') + ']';
 
