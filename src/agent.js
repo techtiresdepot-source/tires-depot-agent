@@ -654,73 +654,55 @@ async function handleMessage(userId, incomingText, platform) {
     }
   }
 
-  // ── Log order when customer provides confirmation data (name + email in same msg) ──
+  // ── Capture order confirmation data (name + email in same msg) ─────────────
   const emailInText = extractEmail(text);
-  if (!session.logged && session.name && emailInText && text.length < 200) {
+  if (!session.pendingOrder && session.name && emailInText && text.length < 200) {
     session.orderEmail = emailInText;
 
-    // Extract order summary from session searches
+    // Extract full name from first item in confirmation message
+    const textParts = text.split(/[\n,]/).map(p => p.trim()).filter(Boolean);
+    const namePart  = textParts.find(p => !/@/.test(p) && p.length > 2 && !/calle|ave|blvd|street|\d{5}/i.test(p)) || session.name;
+    const addrPart  = textParts.find(p => /calle|ave|blvd|street|drive|court|way|\d{3,}/i.test(p)) || '';
+    const compPart  = textParts.find(p => /llc|inc|corp|company|empresa|group|s\.a\.|trucking|independiente/i.test(p)) || '';
+
+    // Build order lines using selectedTires with correct qty per position
     const orderLines = (session.searches || []).map(s => {
-      const qty = s.pendingQty ? Object.values(s.pendingQty).reduce((a,b)=>a+b,0) : '';
-      const tire = s.tires?.[0];
-      return tire ? `${qty}x ${tire.brand} ${tire.size}${s.position?' '+s.position:''}` : '';
+      const posKey = s.position || 'default';
+      const tire   = session.selectedTires?.[posKey] || s.tires?.[0];
+      const qty    = s.pendingQty?.[s.position]
+        || (s.pendingQty ? Object.values(s.pendingQty).reduce((a,b)=>a+b,0) : 1);
+      return tire ? `${qty}x ${tire.brand} ${tire.size}${s.position ? ' ' + s.position : ''}` : '';
     }).filter(Boolean).join(' | ');
 
-    // Detect modalidad from session
-    const modalidad = session.modalidad || 'pendiente';
-
-    // Extract company and address from text (best effort)
-    const textParts = text.split(/[\n,]/).map(p => p.trim()).filter(Boolean);
-    const addrPart  = textParts.find(p => /calle|ave|blvd|street|drive|court|way|rd|st|\d{3,}/i.test(p)) || '';
-    const compPart  = textParts.find(p => /llc|inc|corp|company|empresa|group|s\.a\.|trucking/i.test(p)) || '';
-
-    logOrderToSheet({
-      name:      session.name,
+    // Store pending order — written to sheet after promo answer
+    session.pendingOrder = {
+      name:      namePart,
       company:   compPart,
       address:   addrPart,
       phone:     session.phone || userId,
       email:     emailInText,
       order:     orderLines,
-      total:     '',
-      modalidad,
-      promo:     'pendiente',
-    }).catch(() => {});
-
+      total:     session.lastQuoteTotal ? '$' + session.lastQuoteTotal : '',
+      modalidad: session.modalidad || 'pendiente',
+    };
     session.logged = true;
-    console.log(`[ORDER CONFIRMED] ${session.name} | ${session.phone} | ${emailInText}`);
+    console.log(`[ORDER CONFIRMED] ${namePart} | ${session.phone} | ${emailInText} | ${orderLines}`);
   }
 
   // ── Detect promo subscription consent ────────────────────────────────────
-  const acceptedPromo = /\bsi\b|\byes\b|claro|dale|por supuesto|me apunto|suscrib|quiero|ok|bueno/i.test(text);
-  const declinedPromo = /no\b|no gracias|no,|paso/i.test(text);
-  if (session.logged && session.orderEmail && !session.promoAnswered) {
-    if (acceptedPromo) {
-      session.promoSubscribed = true;
-      session.promoAnswered   = true;
-      // Append subscription flag to lead log
-      const promoEmail = session.orderEmail;
-      const promoName  = session.name || '';
-      const promoPhone = session.phone || userId;
-      try {
-        fs.appendFileSync(LOG_FILE,
-          `"${new Date().toISOString()}","promo_subscribe","${promoPhone}","${promoName}","${promoEmail}","SUBSCRIBED_PROMO"
-`,
-          'utf8');
-        console.log(`[PROMO SUBSCRIBE] ${promoName} | ${promoEmail}`);
-      } catch(e) { console.error('Promo log error:', e.message); }
-    } else if (declinedPromo) {
+  const acceptedPromo = /\bsi\b|\byes\b|claro|dale|por supuesto|me apunto|suscrib|quiero|\bok\b|bueno/i.test(text);
+  const declinedPromo = /\bno\b|no gracias|paso/i.test(text);
+  if (session.logged && session.pendingOrder && !session.promoAnswered) {
+    if (acceptedPromo || declinedPromo) {
       session.promoAnswered = true;
-      console.log(`[PROMO DECLINED] ${session.name}`);
+      const promoVal = acceptedPromo ? 'si' : 'no';
+      // Write order to sheet now that we have promo answer
+      logOrderToSheet({
+        ...session.pendingOrder,
+        promo: promoVal,
+      }).catch(() => {});
+      console.log(`[SHEET WRITE] ${session.pendingOrder.name} | promo=${promoVal}`);
     }
-  }
-
-  // ── Detect delivery modalidad ────────────────────────────────────────────
-  if (/\bmonte\b|\bmontar\b|monta con/i.test(text) && !/sin monte|no monte/i.test(text)) {
-    session.modalidad = 'monte';
-  } else if (/delivery|envio|envío|deliver/i.test(text)) {
-    session.modalidad = 'delivery';
-  } else if (/recoger|pickup|paso a buscar|me las llevo|llevarme/i.test(text)) {
-    session.modalidad = 'pickup';
   }
 
   // ── Detect tire search params ─────────────────────────────────────────────
@@ -984,7 +966,11 @@ async function handleMessage(userId, incomingText, platform) {
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas|old tires/i.test(text);
     if (qty >= 1 && qty <= 24) {
-      quoteContext = `\n\n[QUOTE:\n${formatQuote(tire, qty, mount)}]`;
+      const quoteStr = formatQuote(tire, qty, mount);
+      // Extract total from quote for later logging
+      const totalMatch = quoteStr.match(/TOTAL: \$([\d.]+)/);
+      if (totalMatch) session.lastQuoteTotal = totalMatch[1];
+      quoteContext = `\n\n[QUOTE:\n${quoteStr}]`;
     }
   }
 
