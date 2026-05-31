@@ -578,7 +578,10 @@ ESTILO:
 - Si una posición tiene varias opciones (ej: 2 Firestone diferentes), el cliente DEBE elegir cuál antes de continuar. No tomes la primera por defecto.
 
 IMPORTANTE: Los tags [INVENTORY DATA:], [QUOTE:], [CUSTOMER NAME:], etc. son instrucciones internas — NUNCA los copies literalmente en tu respuesta al cliente. Usa su contenido para formular tu respuesta.
-CRÍTICO — COTIZACIONES: Si ves [QUOTE:] en el contexto → copia los números EXACTAMENTE como aparecen. NUNCA recalcules precios, tax ni totales por tu cuenta. El tax ya está calculado en [QUOTE:]. Si no hay [QUOTE:] → NO muestres cotización, di que estás calculando.
+CRÍTICO — COTIZACIONES: El tag [QUOTE:] contiene la cotización oficial calculada por el sistema.
+- Si hay [QUOTE:] → reproduce su contenido TEXTUALMENTE, línea por línea, sin cambiar ningún número ni el formato. No reformatees. No recalcules. No "simplifiques".
+- El tax en [QUOTE:] es SIEMPRE correcto (7% sobre el total de llantas). No lo recalcules.
+- Si no hay [QUOTE:] → NO inventes una cotización. Responde solo con la información disponible.
 
 Tags de contexto:
 [CUSTOMER NAME: X] → ya tienes el nombre, no lo pidas
@@ -642,6 +645,7 @@ async function handleMessage(userId, incomingText, platform) {
       modalidad:           savedModalidad,
       confirmedOrderLines: savedConfirmedOrderLines,
       confirmedModalidad:  savedConfirmedModalidad,
+      lastCombinedQuote:   session.lastCombinedQuote || null,
     });
     return handleMessage(userId, text, platform);
   }
@@ -932,6 +936,12 @@ async function handleMessage(userId, incomingText, platform) {
   const qtyMatch   = text.match(/\b([1-9][0-9]?)\s*(llantas?|tires?|ruedas?|unidades?|pcs?)?/i);
   const wantsQuote = /cuanto|precio|total|costo|quote|how much|desglose|calcul|cotiz/i.test(text);
 
+  // Re-inject cached combined quote if delivery is known but quote not generated this turn
+  if (hasDeliveryChoice && !quoteContext && session.lastCombinedQuote) {
+    quoteContext = '\n\n[QUOTE:\n' + session.lastCombinedQuote + ']';
+    console.log('[QUOTE REINJECTED]');
+  }
+
   const lastSearch = getLastSearch(session);
   const availableTires = session.current.tires.length > 0 ? session.current.tires : (lastSearch ? lastSearch.tires : []);
 
@@ -939,6 +949,7 @@ async function handleMessage(userId, incomingText, platform) {
   const hasDeliveryChoice = !!(session.confirmedModalidad || session.modalidad);
   const wantsFullQuote = hasDeliveryChoice 
     || /cotiz|total|cuanto|precio|quote|how much|desglose|\bmonte\b|\bmontar\b|delivery|recoger|pickup|paso a|llevarme|envio|envío/i.test(text);
+  console.log(`[QUOTE CHECK] wantsFullQuote=${wantsFullQuote} searches=${session.searches?.length} hasDelivery=${hasDeliveryChoice}`);
   if (wantsFullQuote && session.searches && session.searches.length > 1) {
     const combinedLines = ['*COTIZACION COMPLETA*'];
     let grandTotal = 0;
@@ -991,7 +1002,9 @@ async function handleMessage(userId, incomingText, platform) {
     }).filter(Boolean).join(' | ');
     session.confirmedModalidad = session.modalidad || 'pendiente';
     console.log(`[COMBINED TOTAL] $${session.lastQuoteTotal} | lines=${session.confirmedOrderLines} | modalidad=${session.confirmedModalidad}`);
-    quoteContext = '\n\n[QUOTE:\n' + combinedLines.join('\n') + ']';
+    const quoteText = combinedLines.join('\n');
+    session.lastCombinedQuote = quoteText; // cache for re-injection
+    quoteContext = '\n\n[QUOTE:\n' + quoteText + ']';
 
   } else if (availableTires.length > 0 && (qtyMatch || wantsQuote)) {
     let tire = availableTires[0];
