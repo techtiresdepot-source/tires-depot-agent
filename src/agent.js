@@ -578,6 +578,7 @@ ESTILO:
 - Si una posición tiene varias opciones (ej: 2 Firestone diferentes), el cliente DEBE elegir cuál antes de continuar. No tomes la primera por defecto.
 
 IMPORTANTE: Los tags [INVENTORY DATA:], [QUOTE:], [CUSTOMER NAME:], etc. son instrucciones internas — NUNCA los copies literalmente en tu respuesta al cliente. Usa su contenido para formular tu respuesta.
+CRÍTICO — COTIZACIONES: Si ves [QUOTE:] en el contexto → copia los números EXACTAMENTE como aparecen. NUNCA recalcules precios, tax ni totales por tu cuenta. El tax ya está calculado en [QUOTE:]. Si no hay [QUOTE:] → NO muestres cotización, di que estás calculando.
 
 Tags de contexto:
 [CUSTOMER NAME: X] → ya tienes el nombre, no lo pidas
@@ -934,7 +935,10 @@ async function handleMessage(userId, incomingText, platform) {
   const lastSearch = getLastSearch(session);
   const availableTires = session.current.tires.length > 0 ? session.current.tires : (lastSearch ? lastSearch.tires : []);
 
-  const wantsFullQuote = /cotiz|total|cuanto|precio|quote|how much|desglose|\bmonte\b|\bmontar\b|delivery|recoger|pickup|paso a|llevarme|envio|envío/i.test(text);
+  // Generate combined quote whenever delivery mode is known and multiple searches exist
+  const hasDeliveryChoice = !!(session.confirmedModalidad || session.modalidad);
+  const wantsFullQuote = hasDeliveryChoice 
+    || /cotiz|total|cuanto|precio|quote|how much|desglose|\bmonte\b|\bmontar\b|delivery|recoger|pickup|paso a|llevarme|envio|envío/i.test(text);
   if (wantsFullQuote && session.searches && session.searches.length > 1) {
     const combinedLines = ['*COTIZACION COMPLETA*'];
     let grandTotal = 0;
