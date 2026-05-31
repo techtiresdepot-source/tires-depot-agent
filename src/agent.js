@@ -548,6 +548,11 @@ PASO 4 — CONFIRMACIÓN Y DATOS DEL CLIENTE:
   5. Correo electrónico
 - Pide los 4 datos faltantes (nombre, empresa, dirección, email) en un solo mensaje.
 - Cuando el cliente confirme sus datos: muestra el resumen del pedido, agrega una frase breve de agradecimiento y pregunta: "¿Deseas recibir nuestras promociones semanales por email?" (o similar, natural y breve). NO agregues nada más.
+- Al confirmar la suscripción a promociones (o si declina): cierra con una frase según la modalidad:
+  - Pickup → "Puedes pasar a recoger tu pedido en *12301 NW 116th Ave, Suite 106, Medley FL 33178* en horario Lun–Vie 9am–5pm | Sáb 9am–1pm."
+  - Delivery → "Tu pedido será entregado en la dirección indicada. Te avisamos cuando salga."
+  - Monte → "Puedes traer tu vehículo a *9710 NW 114 Way Bay#1, Medley FL 33178* en horario Lun–Vie 9am–5pm | Sáb 9am–1pm. Sin cita previa."
+- NUNCA digas "te contactaremos" ni "nos comunicaremos contigo".
 - Si el cliente acepta recibir promociones → confirma con un mensaje corto. El sistema lo registrará automáticamente.
 - Si el cliente declina → acepta sin insistir.
 
@@ -691,11 +696,11 @@ async function handleMessage(userId, incomingText, platform) {
       phone:     session.phone || userId,
       email:     emailInText,
       order:     orderLines,
-      total:     session.lastQuoteTotal ? '$' + session.lastQuoteTotal : '',
+      total:     session.lastQuoteTotal ? '$' + parseFloat(session.lastQuoteTotal).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '',
       modalidad: session.modalidad || 'pendiente',
     };
     session.logged = true;
-    console.log(`[ORDER CONFIRMED] ${namePart} | ${session.phone} | ${emailInText} | ${orderLines}`);
+    console.log(`[ORDER CONFIRMED] name=${namePart} phone=${session.phone} email=${emailInText} order=${orderLines} total=${session.pendingOrder.total} modalidad=${session.pendingOrder.modalidad}`);
   }
 
   // ── Detect promo subscription consent ────────────────────────────────────
@@ -739,7 +744,9 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   // Detect qty per position
-  const qtyPosMatches = [...text.matchAll(/(\d+)\s*(?:de\s+)?(?:llantas?\s+)?(?:de\s+|para\s+)?(direccion|dirección|delantera|adelante|delantero|frontal|steer|traction|traccion|tracción|trasera|atrás|atras|trailer|remolque)/gi)];
+  const qtyPosMatches = [...text.matchAll(/(\d+)\s*(?:[\w\s]{0,20}?)(?:de\s+|para\s+)?(direccion|dirección|delantera|adelante|delantero|frontal|steer|traction|traccion|tracción|trasera|atrás|atras|trailer|remolque)/gi)];
+  // Debug qty detection
+  if (qtyPosMatches.length > 0) console.log('[QTY MATCHES]', JSON.stringify(qtyPosMatches.map(m => ({qty:m[1],pos:m[2]}))));
   if (qtyPosMatches.length > 0) {
     qtyPosMatches.forEach(m => {
       const qty = parseInt(m[1]);
@@ -957,6 +964,7 @@ async function handleMessage(userId, incomingText, platform) {
     });
     combinedLines.push(`\n*TOTAL GENERAL: $${grandTotal.toFixed(2)}*`);
     session.lastQuoteTotal = grandTotal.toFixed(2); // store for order logging
+    console.log(`[COMBINED TOTAL] $${session.lastQuoteTotal}`);
     if (!mount) combinedLines.push('🚚 Free delivery — área de Miami');
     quoteContext = '\n\n[QUOTE:\n' + combinedLines.join('\n') + ']';
 
@@ -1034,6 +1042,12 @@ async function handleMessage(userId, incomingText, platform) {
 
   const reply = response.content[0].text;
   session.history.push({ role:'assistant', content: reply });
+  // Extract total from Claude's reply for accurate order logging
+  const replyTotalMatch = reply.match(/TOTAL[^$]*\$([\d,]+\.\d{2})/i);
+  if (replyTotalMatch) {
+    session.lastQuoteTotal = replyTotalMatch[1].replace(/,/g,'');
+    console.log(`[TOTAL CAPTURED] $${session.lastQuoteTotal}`);
+  }
 
 
 
