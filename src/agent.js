@@ -1063,12 +1063,25 @@ async function handleMessage(userId, incomingText, platform) {
 
   const reply = response.content[0].text;
   session.history.push({ role:'assistant', content: reply });
-  // Extract total from Claude's reply for accurate order logging
+  // Extract total, order lines and modalidad from Claude's reply
   const replyTotalMatch = reply.match(/TOTAL[^$]*\$([\d,]+\.\d{2})/i);
   if (replyTotalMatch) {
     session.lastQuoteTotal = replyTotalMatch[1].replace(/,/g,'');
     console.log(`[TOTAL CAPTURED] $${session.lastQuoteTotal}`);
   }
+  // Extract order lines: "Nx Brand Size Position" patterns
+  const replyLineMatches = [...reply.matchAll(/(\d+)x\s+([\w\s]+?)\s+(\d{2,3}[\d\/R.]+\w*)\s*(Steer|Traction|Trailer|All Position)?/gi)];
+  if (replyLineMatches.length > 0) {
+    session.confirmedOrderLines = replyLineMatches
+      .map(m => `${m[1]}x ${m[2].trim()} ${m[3]}${m[4]?' '+m[4]:''}`.trim())
+      .join(' | ');
+    console.log(`[LINES CAPTURED] ${session.confirmedOrderLines}`);
+  }
+  // Capture modalidad from reply text
+  if (/pickup|recoger|recogerlas/i.test(reply)) session.confirmedModalidad = 'pickup';
+  else if (/delivery|entreg/i.test(reply))        session.confirmedModalidad = 'delivery';
+  else if (/monte|montar|instalac/i.test(reply))  session.confirmedModalidad = 'monte';
+  if (session.confirmedModalidad) console.log(`[MODALIDAD CAPTURED] ${session.confirmedModalidad}`);
 
 
 
