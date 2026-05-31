@@ -726,7 +726,7 @@ async function handleMessage(userId, incomingText, platform) {
     session.modalidad = 'monte';
   } else if (/\bdelivery\b|\benvio\b|\benvío\b|\bdeliver\b/i.test(text)) {
     session.modalidad = 'delivery';
-  } else if (/recoger|pickup|paso a buscar|me las llevo|llevarme|solo quiero las gomas|solo quiero llevarme/i.test(text)) {
+  } else if (/recoger|pickup|\bpaso\b|paso a buscar|me las llevo|llevarme|solo quiero las gomas|solo quiero llevarme/i.test(text)) {
     session.modalidad = 'pickup';
   }
   if (session.modalidad) console.log(`[MODALIDAD] ${session.modalidad} | "${text.substring(0,50)}"`);
@@ -947,7 +947,7 @@ async function handleMessage(userId, incomingText, platform) {
   if (wantsFullQuote && session.searches && session.searches.length > 1) {
     const combinedLines = ['*COTIZACION COMPLETA*'];
     let grandTotal = 0;
-    const mount    = /\bmonte\b|\bmontar\b|\bmounting\b|monta con|instalaci/i.test(text) && !/sin monte|no monte|without mount|no mount/i.test(text);
+    const mount    = session.modalidad === 'monte';
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas/i.test(text);
 
@@ -1029,7 +1029,7 @@ async function handleMessage(userId, incomingText, platform) {
       : null;
     const totalQty = posQty || Object.values(session.current.pendingQty||{}).reduce((a,b)=>a+b,0) || (lastSearch?.qty || 0);
     const qty      = totalQty > 0 ? totalQty : (!isJustNumber && qtyMatch ? parseInt(qtyMatch[1]) : 4);
-    const mount    = /\bmonte\b|\bmontar\b|\bmounting\b|monta con|instalaci/i.test(text) && !/sin monte|no monte|without mount|no mount/i.test(text);
+    const mount    = session.modalidad === 'monte';
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas|old tires/i.test(text);
     if (qty >= 1 && qty <= 24) {
@@ -1041,8 +1041,8 @@ async function handleMessage(userId, incomingText, platform) {
     }
   }
 
-  // Re-inject cached quote if delivery known but no new quote generated this turn
-  if (!quoteContext && (session.confirmedModalidad || session.modalidad) && session.lastCombinedQuote) {
+  // Re-inject cached quote if delivery known, no new quote generated, and order not yet confirmed
+  if (!quoteContext && (session.confirmedModalidad || session.modalidad) && session.lastCombinedQuote && !session.pendingOrder && !session.promoAnswered) {
     quoteContext = '\n\n[QUOTE:\n' + session.lastCombinedQuote + ']';
     console.log('[QUOTE REINJECTED]');
   }
