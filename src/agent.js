@@ -946,9 +946,9 @@ async function handleMessage(userId, incomingText, platform) {
     const disposal = /basura|disposal|dispos|llantas viejas/i.test(text);
 
     const seenKeys = new Set();
+    let totalTires = 0, totalTax = 0, totalMount = 0;
     session.searches.forEach(s => {
       if (!s.tires || s.tires.length === 0) return;
-      // Deduplicate by position
       const dedupeKey = s.position || s.key || 'default';
       if (seenKeys.has(dedupeKey)) return;
       seenKeys.add(dedupeKey);
@@ -959,13 +959,25 @@ async function handleMessage(userId, incomingText, platform) {
         || (s.pendingQty ? Object.values(s.pendingQty).find(v => v > 0) : null)
         || 1;
       const c = calcTotal(tire, qty, mount, valve, disposal);
-      combinedLines.push(`*${qty}x ${tire.brand} ${tire.size}${s.position?' '+s.position:''}* — $${c.grand.toFixed(2)}`);
-      grandTotal += c.grand;
+      const lineTotal = tire.price * qty;
+      totalTires += lineTotal;
+      totalTax   += c.tax;
+      totalMount += c.mc;
+      combinedLines.push(`🛞 *${qty}x ${tire.brand} ${tire.size}${s.position?' '+s.position:''}*\n   $${tire.price}/llanta × ${qty} = $${lineTotal.toFixed(2)}`);
     });
-    combinedLines.push(`\n*TOTAL GENERAL: $${grandTotal.toFixed(2)}*`);
-    session.lastQuoteTotal = grandTotal.toFixed(2); // store for order logging
-    console.log(`[COMBINED TOTAL] $${session.lastQuoteTotal}`);
-    if (!mount) combinedLines.push('🚚 Free delivery — área de Miami');
+    const taxBase = totalTires;
+    const computedTax = taxBase * BIZ.taxRate;
+    grandTotal = totalTires + computedTax + totalMount;
+    combinedLines.push(`   ━━━━━━━━━━━━━━`);
+    combinedLines.push(`   Subtotal llantas: $${totalTires.toFixed(2)}`);
+    combinedLines.push(`   Tax FL (7%): $${computedTax.toFixed(2)}`);
+    if (mount) combinedLines.push(`   Monte: $${totalMount.toFixed(2)}`);
+    combinedLines.push(`   ━━━━━━━━━━━━━━`);
+    combinedLines.push(`*TOTAL: $${grandTotal.toFixed(2)}*`);
+    if (!mount) combinedLines.push(`🚚 Free delivery — área de Miami`);
+    else combinedLines.push(`📍 Centro de servicios: 9710 NW 114 Way Bay#1, Medley FL 33178`);
+    session.lastQuoteTotal = grandTotal.toFixed(2);
+    console.log(`[COMBINED TOTAL] $${session.lastQuoteTotal} (tires=$${totalTires.toFixed(2)} tax=$${computedTax.toFixed(2)})`);
     quoteContext = '\n\n[QUOTE:\n' + combinedLines.join('\n') + ']';
 
   } else if (availableTires.length > 0 && (qtyMatch || wantsQuote)) {
