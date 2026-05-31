@@ -623,20 +623,24 @@ async function handleMessage(userId, incomingText, platform) {
     const savedName  = session.name;
     const savedPhone = session.phone;
     const savedEmail = session.email;
-    const savedSearches       = session.searches       || [];
-    const savedSelectedTires  = session.selectedTires  || {};
-    const savedLastQuoteTotal = session.lastQuoteTotal || null;
-    const savedModalidad      = session.modalidad      || null;
+    const savedSearches            = session.searches            || [];
+    const savedSelectedTires       = session.selectedTires       || {};
+    const savedLastQuoteTotal      = session.lastQuoteTotal      || null;
+    const savedModalidad           = session.modalidad           || null;
+    const savedConfirmedOrderLines = session.confirmedOrderLines || null;
+    const savedConfirmedModalidad  = session.confirmedModalidad  || null;
     sessions.set(userId, {
       history: [], tires: [], size: null, position: null,
       pendingPositions: [], shownPositions: [], pendingQty: {},
       origin: null, brand: null,
       name: savedName, phone: savedPhone, email: savedEmail,
       step: 'searching', logged: false, emailOffered: false,
-      searches:       savedSearches,
-      selectedTires:  savedSelectedTires,
-      lastQuoteTotal: savedLastQuoteTotal,
-      modalidad:      savedModalidad,
+      searches:            savedSearches,
+      selectedTires:       savedSelectedTires,
+      lastQuoteTotal:      savedLastQuoteTotal,
+      modalidad:           savedModalidad,
+      confirmedOrderLines: savedConfirmedOrderLines,
+      confirmedModalidad:  savedConfirmedModalidad,
     });
     return handleMessage(userId, text, platform);
   }
