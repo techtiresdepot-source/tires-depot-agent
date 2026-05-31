@@ -175,7 +175,7 @@ async function logOrderToSheet({ name, company, address, phone, email, order, to
 const WC_BASE = process.env.WC_STORE_URL || 'https://tires-depot.com';
 const WC_KEY  = process.env.WC_CONSUMER_KEY;
 const WC_SEC  = process.env.WC_CONSUMER_SECRET;
-const cache   = { data: null, ts: 0, ttl: 60 * 1000 }; // 1 min cache
+const cache   = { data: null, ts: 0, ttl: 5 * 60 * 1000 }; // 5 min cache
 
 async function fetchAllInventory() {
   if (cache.data && Date.now() - cache.ts < cache.ttl) return cache.data;
@@ -183,7 +183,7 @@ async function fetchAllInventory() {
   const all  = [];
   let page   = 1;
   while (true) {
-    const res   = await fetch(`${WC_BASE}/wp-json/wc/v3/products?per_page=100&page=${page}&status=publish&_fields=id,name,price,regular_price,sale_price,stock_status,stock_quantity,in_stock,manage_stock,purchasable,tags,attributes,categories,meta_data`, { headers: { Authorization: `Basic ${auth}` } });
+    const res   = await fetch(`${WC_BASE}/wp-json/wc/v3/products?per_page=100&page=${page}&status=publish&_fields=id,name,price,regular_price,sale_price,stock_status,stock_quantity,in_stock,manage_stock,purchasable,tags,attributes,categories,meta_data`, { headers: { Authorization: `Basic ${auth}` }, signal: AbortSignal.timeout(15000) });
     if (!res.ok) throw new Error(`WC API error: ${res.status}`);
     const batch = await res.json();
     if (!batch.length) break;
