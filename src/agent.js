@@ -673,20 +673,13 @@ async function handleMessage(userId, incomingText, platform) {
     const addrPart  = (textParts.find(p => /calle|ave|blvd|street|drive|court|way|\d{3,}/i.test(p)) || '').replace(/\S+@\S+/g, '').trim();
     const compPart  = textParts.find(p => /llc|inc|corp|company|empresa|group|s\.a\.|trucking|independiente/i.test(p)) || '';
 
-    // Build order lines using selectedTires with correct qty per position
-    const orderLines = (session.searches || []).map(s => {
-      const posKey = s.position || 'default';
-      const tire   = session.selectedTires?.[posKey] || s.tires?.[0];
-      // Use explicit per-position qty saved at search time
-      const qty = s.positionQty
-        || (s.pendingQty && s.position ? s.pendingQty[s.position] : null)
-        || (s.pendingQty ? Object.values(s.pendingQty).find(v => v > 0) : null)
-        || 1;
-      return tire ? `${qty}x ${tire.brand} ${tire.size}${s.position ? ' ' + s.position : ''}` : '';
-    }).filter(Boolean).join(' | ');
+    // Use confirmed snapshot captured at quote generation time
+    const orderLines  = session.confirmedOrderLines || 'ver cotización';
+    const orderModal  = session.confirmedModalidad  || session.modalidad || 'pendiente';
+    const orderTotal  = session.lastQuoteTotal
+      ? '$' + parseFloat(session.lastQuoteTotal).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})
+      : '';
 
-    // Store pending order — written to sheet after promo answer
-    // Update session name with full name from confirmation
     if (namePart && namePart.length > 1) session.name = namePart;
 
     session.pendingOrder = {
@@ -696,11 +689,11 @@ async function handleMessage(userId, incomingText, platform) {
       phone:     session.phone || userId,
       email:     emailInText,
       order:     orderLines,
-      total:     session.lastQuoteTotal ? '$' + parseFloat(session.lastQuoteTotal).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '',
-      modalidad: session.modalidad || 'pendiente',
+      total:     orderTotal,
+      modalidad: orderModal,
     };
     session.logged = true;
-    console.log(`[ORDER CONFIRMED] name=${namePart} phone=${session.phone} email=${emailInText} order=${orderLines} total=${session.pendingOrder.total} modalidad=${session.pendingOrder.modalidad}`);
+    console.log(`[ORDER CONFIRMED] name=${namePart} order=${orderLines} total=${orderTotal} modalidad=${orderModal}`);
   }
 
   // ── Detect promo subscription consent ────────────────────────────────────
@@ -977,7 +970,19 @@ async function handleMessage(userId, incomingText, platform) {
     if (!mount) combinedLines.push(`🚚 Free delivery — área de Miami`);
     else combinedLines.push(`📍 Centro de servicios: 9710 NW 114 Way Bay#1, Medley FL 33178`);
     session.lastQuoteTotal = grandTotal.toFixed(2);
-    console.log(`[COMBINED TOTAL] $${session.lastQuoteTotal} (tires=$${totalTires.toFixed(2)} tax=$${computedTax.toFixed(2)})`);
+    // Snapshot order lines with correct qty/brand at quote time
+    session.confirmedOrderLines = Array.from(seenKeys).map(posKey => {
+      const s = session.searches.find(s => (s.position || 'default') === posKey);
+      if (!s || !s.tires?.length) return null;
+      const tire = session.selectedTires?.[posKey] || s.tires[0];
+      const qty  = s.positionQty
+        || (s.pendingQty && s.position ? s.pendingQty[s.position] : null)
+        || (s.pendingQty ? Object.values(s.pendingQty).find(v => v > 0) : null)
+        || 1;
+      return `${qty}x ${tire.brand} ${tire.size}${s.position ? ' ' + s.position : ''}`;
+    }).filter(Boolean).join(' | ');
+    session.confirmedModalidad = session.modalidad || 'pendiente';
+    console.log(`[COMBINED TOTAL] $${session.lastQuoteTotal} | lines=${session.confirmedOrderLines} | modalidad=${session.confirmedModalidad}`);
     quoteContext = '\n\n[QUOTE:\n' + combinedLines.join('\n') + ']';
 
   } else if (availableTires.length > 0 && (qtyMatch || wantsQuote)) {
