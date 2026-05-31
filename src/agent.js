@@ -742,7 +742,7 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   // Detect qty per position
-  const qtyPosMatches = [...text.matchAll(/(\d+)\s*(?:[\w\s]{0,20}?)(?:de\s+|para\s+)?(direccion|dirección|delantera|adelante|delantero|frontal|steer|traction|traccion|tracción|trasera|atrás|atras|trailer|remolque)/gi)];
+  const qtyPosMatches = [...text.matchAll(/(\d+)\s*(?:[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]{0,25}?)(?:de\s+|para\s+)?(direccion|dirección|delantera|adelante|delantero|frontal|steer|traction|traccion|tracción|trasera|atrás|atras|trailer|remolque)/gi)];
   // Debug qty detection
   if (qtyPosMatches.length > 0) console.log('[QTY MATCHES]', JSON.stringify(qtyPosMatches.map(m => ({qty:m[1],pos:m[2]}))));
   if (qtyPosMatches.length > 0) {
