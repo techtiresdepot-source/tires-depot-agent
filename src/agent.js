@@ -936,12 +936,6 @@ async function handleMessage(userId, incomingText, platform) {
   const qtyMatch   = text.match(/\b([1-9][0-9]?)\s*(llantas?|tires?|ruedas?|unidades?|pcs?)?/i);
   const wantsQuote = /cuanto|precio|total|costo|quote|how much|desglose|calcul|cotiz/i.test(text);
 
-  // Re-inject cached combined quote if delivery is known but quote not generated this turn
-  if (hasDeliveryChoice && !quoteContext && session.lastCombinedQuote) {
-    quoteContext = '\n\n[QUOTE:\n' + session.lastCombinedQuote + ']';
-    console.log('[QUOTE REINJECTED]');
-  }
-
   const lastSearch = getLastSearch(session);
   const availableTires = session.current.tires.length > 0 ? session.current.tires : (lastSearch ? lastSearch.tires : []);
 
@@ -1045,6 +1039,12 @@ async function handleMessage(userId, incomingText, platform) {
       if (totalMatch) session.lastQuoteTotal = totalMatch[1];
       quoteContext = `\n\n[QUOTE:\n${quoteStr}]`;
     }
+  }
+
+  // Re-inject cached quote if delivery known but no new quote generated this turn
+  if (!quoteContext && (session.confirmedModalidad || session.modalidad) && session.lastCombinedQuote) {
+    quoteContext = '\n\n[QUOTE:\n' + session.lastCombinedQuote + ']';
+    console.log('[QUOTE REINJECTED]');
   }
 
   // ── Email offer ───────────────────────────────────────────────────────────
