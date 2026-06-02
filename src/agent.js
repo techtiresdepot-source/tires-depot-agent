@@ -980,8 +980,14 @@ async function handleMessage(userId, incomingText, platform) {
     if (mount) combinedLines.push(`   Monte: $${totalMount.toFixed(2)}`);
     combinedLines.push(`   ━━━━━━━━━━━━━━`);
     combinedLines.push(`*TOTAL: $${grandTotal.toFixed(2)}*`);
-    if (!mount) combinedLines.push(`🚚 Free delivery — área de Miami`);
-    else combinedLines.push(`📍 Centro de servicios: 9710 NW 114 Way Bay#1, Medley FL 33178`);
+    const modalForQuote = session.modalidad || session.confirmedModalidad;
+    if (modalForQuote === 'monte') {
+      combinedLines.push(`📍 Centro de servicios: 9710 NW 114 Way Bay#1, Medley FL 33178 | Sin cita previa`);
+    } else if (modalForQuote === 'pickup') {
+      combinedLines.push(`📦 Pickup en tienda: 12301 NW 116th Ave, Suite 106, Medley FL 33178 | Lun–Vie 9am–5pm | Sáb 9am–1pm`);
+    } else {
+      combinedLines.push(`🚚 Free delivery — área de Miami`);
+    }
     session.lastQuoteTotal = grandTotal.toFixed(2);
     // Snapshot order lines with correct qty/brand at quote time
     session.confirmedOrderLines = Array.from(seenKeys).map(posKey => {
