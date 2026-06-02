@@ -527,7 +527,7 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
 - Si mencionan marca → filtra por esa marca SOLO cuando está claramente asociada a esa posición. Ejemplo: 'Firestone delantera y 8 traseras' → Firestone SOLO para delantera, para traseras NO hay filtro de marca. Si el [INVENTORY DATA] no trae filtro de marca, muestra TODAS las marcas disponibles.
 - Si mencionan origen (americanas, vietnamitas, brasileñas, japonesas, indias, camboyanas, etc.) → filtra por el país en el nombre del producto. El filtro de origen aplica SOLO a la búsqueda donde el cliente lo mencionó. Si [INVENTORY DATA] dice 'Sin filtro de origen' → muestra TODAS las marcas disponibles sin filtrar por país, aunque el cliente haya pedido americanas en una búsqueda anterior.
 - Cuando el cliente elige llantas para VARIAS POSICIONES → la cotización final debe incluir TODOS los grupos. El tag [BÚSQUEDAS EN SESIÓN] muestra todas las búsquedas. Usa esos datos para presentar una cotización completa con cada grupo detallado y un total general.
-- Hay 3 opciones EXCLUYENTES. Cuando el cliente haya seleccionado marca y cantidad → SIEMPRE pregunta ANTES de mostrar la cotización final: "¿Montas con nosotros (-$5/llanta), prefieres delivery gratis o pasas a recogerlas?"
+- Hay 3 opciones EXCLUYENTES. Cuando el cliente haya seleccionado marca y cantidad → SIEMPRE pregunta ANTES de mostrar la cotización final: "¿Montas con nosotros (-$5/llanta), prefieres delivery gratis en el área de Miami o pasas a recogerlas?"
   1. *Monta con nosotros* → descuento -$5/llanta, incluye monte en cotización, pregunta válvulas ($5/c) y manejo de llantas viejas ($10/c)
   2. *Free delivery* → sin monte, sin descuento de monte, free delivery área de Miami
   3. *Pickup* → sin monte, sin descuento, el cliente recoge en tienda
