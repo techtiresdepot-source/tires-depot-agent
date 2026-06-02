@@ -183,7 +183,7 @@ async function fetchAllInventory() {
   const all  = [];
   let page   = 1;
   while (true) {
-    const res   = await fetch(`${WC_BASE}/wp-json/wc/v3/products?per_page=100&page=${page}&status=publish&_fields=id,name,price,regular_price,sale_price,stock_status,stock_quantity,in_stock,manage_stock,purchasable,tags,attributes,categories,meta_data`, { headers: { Authorization: `Basic ${auth}` }, signal: AbortSignal.timeout(15000) });
+    const res   = await fetch(`${WC_BASE}/wp-json/wc/v3/products?per_page=100&page=${page}&status=publish`, { headers: { Authorization: `Basic ${auth}` }, signal: AbortSignal.timeout(15000) });
     if (!res.ok) throw new Error(`WC API error: ${res.status}`);
     const batch = await res.json();
     if (!batch.length) break;
@@ -217,7 +217,10 @@ async function fetchAllInventory() {
   const mapped = all.map(p => ({
     id:       p.id,
     name:     p.name,
-    price:    parseFloat(p.price) || parseFloat(p.regular_price) || parseFloat(p.sale_price) || 0,
+    price:    parseFloat(p.price) || parseFloat(p.regular_price) || parseFloat(p.sale_price)
+              || parseFloat(p.meta_data?.find(m => m.key === '_price')?.value)
+              || parseFloat(p.meta_data?.find(m => m.key === '_regular_price')?.value)
+              || 0,
     stock:    (p.stock_quantity ?? 0) || stockFromMeta(p),
     inStock:  p.stock_status === 'instock' || p.in_stock === true || p.stock_status !== 'outofstock' || (p.stock_quantity != null && p.stock_quantity > 0) || stockFromMeta(p) > 0,
     tags:     p.tags || [],
