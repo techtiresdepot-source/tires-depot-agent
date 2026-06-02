@@ -547,7 +547,7 @@ PASO 4 — CONFIRMACIÓN Y DATOS DEL CLIENTE:
   4. Teléfono — ya lo tienes en [CUSTOMER PHONE], no lo pidas
   5. Correo electrónico
 - Pide los 4 datos faltantes (nombre, empresa, dirección, email) en un solo mensaje.
-- Cuando el cliente confirme sus datos: muestra el resumen del pedido, agrega una frase breve de agradecimiento y pregunta: "¿Deseas recibir nuestras promociones semanales por email?" (o similar, natural y breve). NO agregues nada más.
+- Cuando el cliente confirme sus datos (nombre, dirección, email): muestra el resumen del pedido con los datos, agrega frase de agradecimiento y pregunta sobre promociones semanales. NO vuelvas a preguntar '¿Confirmamos el pedido?' — eso ya se hizo antes.
 - Al confirmar la suscripción a promociones (o si declina): cierra con una frase según la modalidad:
   - Pickup → "Puedes pasar a recoger tu pedido en *12301 NW 116th Ave, Suite 106, Medley FL 33178* en horario Lun–Vie 9am–5pm | Sáb 9am–1pm."
   - Delivery → "Tu pedido será entregado en la dirección indicada. Te avisamos cuando salga."
@@ -1048,7 +1048,8 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   // Re-inject cached quote if delivery known, no new quote generated, and order not yet confirmed
-  if (!quoteContext && (session.confirmedModalidad || session.modalidad) && session.lastCombinedQuote && !session.pendingOrder && !session.promoAnswered) {
+  const isConfirmationMsg = !!extractEmail(text);
+  if (!quoteContext && (session.confirmedModalidad || session.modalidad) && session.lastCombinedQuote && !session.logged && !session.promoAnswered && !isConfirmationMsg) {
     quoteContext = '\n\n[QUOTE:\n' + session.lastCombinedQuote + ']';
     console.log('[QUOTE REINJECTED]');
   }
