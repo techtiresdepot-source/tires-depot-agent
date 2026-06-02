@@ -972,6 +972,7 @@ async function handleMessage(userId, incomingText, platform) {
       seenKeys.add(dedupeKey);
       const posKey = s.position || 'default';
       const tire   = session.selectedTires?.[posKey] || session.selectedTires?.['default'] || s.tires[0];
+      console.log(`[COMBINED TIRE] pos=${posKey} selected=${session.selectedTires?.[posKey]?.brand} default=${session.selectedTires?.['default']?.brand} using=${tire.brand}`);
       const qty    = s.positionQty
         || (s.pendingQty && s.position ? s.pendingQty[s.position] : null)
         || (s.pendingQty ? Object.values(s.pendingQty).find(v => v > 0) : null)
@@ -1044,6 +1045,7 @@ async function handleMessage(userId, incomingText, platform) {
         : (session.lastShownPositions || []);
       const posKey = shownPos[shownPos.length - 1] || 'default';
       session.selectedTires[posKey] = tire;
+      console.log(`[SELECTION] posKey=${posKey} tire=${tire.brand} ${tire.size} idx=${pickMatch?parseInt(pickMatch[1])-1:'?'} shownPos=${JSON.stringify(shownPos)} lastShown=${JSON.stringify(session.lastShownPositions)}`);
     }
 
     // Use qty for the last shown position specifically, not the total of all positions
