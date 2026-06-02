@@ -353,11 +353,23 @@ function filterTires(size, position, brand, origin) {
   if (brand) {
     const normalize = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
     const b = normalize(brand);
+    const beforeBrand = tires.length;
     tires = tires.filter(p => {
       const pb = normalize(p.brand || '');
       const pn = normalize(p.name  || '');
       return pb.includes(b) || pn.includes(b);
     });
+    console.log(`[BRAND FILTER] brand=${brand} before=${beforeBrand} after=${tires.length} sample=${tires.slice(0,2).map(t=>t.brand+' '+t.size).join(', ')}`);
+    if (tires.length === 0) {
+      // Log what brands were available before brand filter
+      const normalize2 = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      const allBrandsInSize = [...new Set((cache.data||[]).filter(p => {
+        if (!size) return true;
+        const q = normalizeSize(size);
+        return normalizeSize(p.size) === q || normalizeSize(p.name).includes(q);
+      }).map(p => p.brand))];
+      console.log(`[BRAND FILTER MISS] available brands for ${size}: ${allBrandsInSize.join(', ')}`);
+    }
   }
 
   if (origin) {
