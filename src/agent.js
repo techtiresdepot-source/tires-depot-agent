@@ -629,12 +629,14 @@ async function handleMessage(userId, incomingText, platform) {
     const savedName  = session.name;
     const savedPhone = session.phone;
     const savedEmail = session.email;
-    const savedSearches            = session.searches            || [];
-    const savedSelectedTires       = session.selectedTires       || {};
-    const savedLastQuoteTotal      = session.lastQuoteTotal      || null;
-    const savedModalidad           = session.modalidad           || null;
-    const savedConfirmedOrderLines = session.confirmedOrderLines || null;
-    const savedConfirmedModalidad  = session.confirmedModalidad  || null;
+    const savedSearches            = session.searches                      || [];
+    const savedSelectedTires       = session.selectedTires                 || {};
+    const savedLastQuoteTotal      = session.lastQuoteTotal                || null;
+    const savedModalidad           = session.modalidad                     || null;
+    const savedConfirmedOrderLines = session.confirmedOrderLines           || null;
+    const savedConfirmedModalidad  = session.confirmedModalidad            || null;
+    const savedShownPositions      = session.current?.shownPositions       || [];
+    const savedLastCombinedQuote   = session.lastCombinedQuote             || null;
     sessions.set(userId, {
       history: [], tires: [], size: null, position: null,
       pendingPositions: [], shownPositions: [], pendingQty: {},
@@ -647,7 +649,8 @@ async function handleMessage(userId, incomingText, platform) {
       modalidad:           savedModalidad,
       confirmedOrderLines: savedConfirmedOrderLines,
       confirmedModalidad:  savedConfirmedModalidad,
-      lastCombinedQuote:   session.lastCombinedQuote || null,
+      lastCombinedQuote:   savedLastCombinedQuote,
+      lastShownPositions:  savedShownPositions,
     });
     return handleMessage(userId, text, platform);
   }
@@ -847,7 +850,10 @@ async function handleMessage(userId, incomingText, platform) {
         const originLabel = session.current.origin ? ` | Origen: ${session.current.origin}` : ' | Sin filtro de origen (mostrar todas las marcas disponibles)';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.current.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
 
-        if (session.current.position) session.current.shownPositions.push(session.current.position);
+        if (session.current.position) {
+          session.current.shownPositions.push(session.current.position);
+          session.lastShownPositions = [...session.current.shownPositions]; // persist
+        }
 
         // Save current (first) position search before moving to pending
         saveCurrentSearch(session);
@@ -869,7 +875,10 @@ async function handleMessage(userId, incomingText, platform) {
             inventoryContext += `\n\n[INVENTORY DATA POSICIÓN ${nextPos.toUpperCase()}: ${nextTires.length} llanta(s):\n${nextList}]`;
             session.current.tires = nextTires;
           }
-          if (session.current.position) session.current.shownPositions.push(session.current.position);
+          if (session.current.position) {
+          session.current.shownPositions.push(session.current.position);
+          session.lastShownPositions = [...session.current.shownPositions]; // persist
+        }
           // Save each pending position separately
           saveCurrentSearch(session);
         }
@@ -962,7 +971,7 @@ async function handleMessage(userId, incomingText, platform) {
       if (seenKeys.has(dedupeKey)) return;
       seenKeys.add(dedupeKey);
       const posKey = s.position || 'default';
-      const tire   = session.selectedTires?.[posKey] || s.tires[0];
+      const tire   = session.selectedTires?.[posKey] || session.selectedTires?.['default'] || s.tires[0];
       const qty    = s.positionQty
         || (s.pendingQty && s.position ? s.pendingQty[s.position] : null)
         || (s.pendingQty ? Object.values(s.pendingQty).find(v => v > 0) : null)
@@ -1030,7 +1039,10 @@ async function handleMessage(userId, incomingText, platform) {
     if (brandPick >= 0) tire = session.current.tires[brandPick];
 
     if (isJustNumber || pickMatch || brandPick >= 0 || leadingNum) {
-      const posKey = session.current.shownPositions[session.current.shownPositions.length - 1] || 'default';
+      const shownPos = session.current.shownPositions.length > 0
+        ? session.current.shownPositions
+        : (session.lastShownPositions || []);
+      const posKey = shownPos[shownPos.length - 1] || 'default';
       session.selectedTires[posKey] = tire;
     }
 
