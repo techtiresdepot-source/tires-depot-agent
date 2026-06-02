@@ -192,15 +192,12 @@ async function fetchAllInventory() {
     page++;
   }
 
-  // Debug: log stock fields for Firestone and 11R22.5 products specifically
+  // Debug: log ALL 11R22.5 products with their raw price fields
   const firestones = all.filter(p => p.name.toUpperCase().includes('FIRESTONE') || p.name.toUpperCase().includes('11R22'));
-  if (firestones.length > 0) {
-    firestones.slice(0,3).forEach(p => {
-      console.log(`[FIRESTONE RAW] "${p.name}" stock_status=${p.stock_status} stock_qty=${p.stock_quantity} meta_stock=${stockFromMeta(p)} price=${p.price} regular_price=${p.regular_price}`);
-    });
-  } else {
-    console.log('[FIRESTONE RAW] No Firestone products returned from WC API!');
-  }
+  firestones.forEach(p => {
+    console.log(`[11R22/FIRESTONE RAW] "${p.name}" price="${p.price}" reg="${p.regular_price}" sale="${p.sale_price}" status=${p.stock_status} qty=${p.stock_quantity}`);
+  });
+  if (firestones.length === 0) console.log('[11R22/FIRESTONE RAW] NONE RETURNED FROM API');
   // Debug: log ALL attributes of first few products to verify structure
   if (all.length > 0) {
     all.slice(0, 3).forEach(p => {
