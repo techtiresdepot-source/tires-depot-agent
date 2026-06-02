@@ -942,6 +942,35 @@ async function handleMessage(userId, incomingText, platform) {
     }
   }
 
+  // ── Tire selection — runs unconditionally before quote generation ──────────
+  const _availForSelection = session.current.tires.length > 0
+    ? session.current.tires
+    : (getLastSearch(session)?.tires || []);
+  if (_availForSelection.length > 0) {
+    const _isJustNum   = /^\s*\d+\s*$/.test(text);
+    const _leadingNum  = text.match(/^\s*(\d+)\s+\w/);
+    const _pickMatch   = text.match(/(?:número?|opción|el|la|#)\s*([1-9][0-9]?)(?:\s|$)/i)
+                      || (_isJustNum  ? text.match(/(\d+)/) : null)
+                      || (_leadingNum ? _leadingNum : null);
+    const _brandPick   = _availForSelection.findIndex(t =>
+      t.brand && text.toLowerCase().includes(t.brand.toLowerCase())
+    );
+    if (_pickMatch || _brandPick >= 0) {
+      let _selTire = _availForSelection[0];
+      if (_pickMatch) {
+        const _idx = parseInt(_pickMatch[1]) - 1;
+        if (_idx >= 0 && _idx < _availForSelection.length) _selTire = _availForSelection[_idx];
+      }
+      if (_brandPick >= 0) _selTire = _availForSelection[_brandPick];
+      const _shownPos = session.current.shownPositions.length > 0
+        ? session.current.shownPositions
+        : (session.lastShownPositions || []);
+      const _posKey = _shownPos[_shownPos.length - 1] || 'default';
+      session.selectedTires[_posKey] = _selTire;
+      console.log(`[SELECTION] posKey=${_posKey} tire=${_selTire.brand} idx=${_pickMatch?parseInt(_pickMatch[1])-1:'brand'} shownPos=${JSON.stringify(_shownPos)}`);
+    }
+  }
+
   // ── Build quote ───────────────────────────────────────────────────────────
   let quoteContext = '';
   const qtyMatch   = text.match(/\b([1-9][0-9]?)\s*(llantas?|tires?|ruedas?|unidades?|pcs?)?/i);
