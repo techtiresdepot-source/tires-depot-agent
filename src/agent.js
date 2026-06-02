@@ -642,7 +642,7 @@ async function handleMessage(userId, incomingText, platform) {
       pendingPositions: [], shownPositions: [], pendingQty: {},
       origin: null, brand: null,
       name: savedName, phone: savedPhone, email: savedEmail,
-      step: 'searching', logged: false, emailOffered: false,
+      step: 'searching', logged: false, emailOffered: false, pendingOrder: null, promoAnswered: false,
       searches:            savedSearches,
       selectedTires:       savedSelectedTires,
       lastQuoteTotal:      savedLastQuoteTotal,
@@ -982,7 +982,7 @@ async function handleMessage(userId, incomingText, platform) {
   // Generate combined quote whenever delivery mode is known and multiple searches exist
   const hasDeliveryChoice = !!(session.confirmedModalidad || session.modalidad);
   const isConfirmationMsg  = !!extractEmail(text); // message with customer data
-  const wantsFullQuote = !isConfirmationMsg && !session.logged && (hasDeliveryChoice 
+  const wantsFullQuote = !isConfirmationMsg && (hasDeliveryChoice 
     || /cotiz|total|cuanto|precio|quote|how much|desglose|\bmonte\b|\bmontar\b|delivery|recoger|pickup|paso a|llevarme|envio|envío/i.test(text));
   console.log(`[QUOTE CHECK] wantsFullQuote=${wantsFullQuote} searches=${session.searches?.length} hasDelivery=${hasDeliveryChoice} isConfirm=${isConfirmationMsg} logged=${session.logged}`);
   if (wantsFullQuote && session.searches && session.searches.length > 1) {
