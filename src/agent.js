@@ -943,9 +943,10 @@ async function handleMessage(userId, incomingText, platform) {
 
   // Generate combined quote whenever delivery mode is known and multiple searches exist
   const hasDeliveryChoice = !!(session.confirmedModalidad || session.modalidad);
-  const wantsFullQuote = hasDeliveryChoice 
-    || /cotiz|total|cuanto|precio|quote|how much|desglose|\bmonte\b|\bmontar\b|delivery|recoger|pickup|paso a|llevarme|envio|envío/i.test(text);
-  console.log(`[QUOTE CHECK] wantsFullQuote=${wantsFullQuote} searches=${session.searches?.length} hasDelivery=${hasDeliveryChoice}`);
+  const isConfirmationMsg  = !!extractEmail(text); // message with customer data
+  const wantsFullQuote = !isConfirmationMsg && !session.logged && (hasDeliveryChoice 
+    || /cotiz|total|cuanto|precio|quote|how much|desglose|\bmonte\b|\bmontar\b|delivery|recoger|pickup|paso a|llevarme|envio|envío/i.test(text));
+  console.log(`[QUOTE CHECK] wantsFullQuote=${wantsFullQuote} searches=${session.searches?.length} hasDelivery=${hasDeliveryChoice} isConfirm=${isConfirmationMsg} logged=${session.logged}`);
   if (wantsFullQuote && session.searches && session.searches.length > 1) {
     const combinedLines = ['*COTIZACION COMPLETA*'];
     let grandTotal = 0;
@@ -1006,7 +1007,7 @@ async function handleMessage(userId, incomingText, platform) {
     console.log(`[COMBINED TOTAL] $${session.lastQuoteTotal} | lines=${session.confirmedOrderLines} | modalidad=${session.confirmedModalidad}`);
     const quoteText = combinedLines.join('\n');
     session.lastCombinedQuote = quoteText; // cache for re-injection
-    quoteContext = '\n\n[QUOTE:\n' + quoteText + ']';
+    quoteContext = '\n\n[QUOTE — presenta esta cotización al cliente y pregunta si confirma:\n' + quoteText + ']';
 
   } else if (availableTires.length > 0 && (qtyMatch || wantsQuote)) {
     let tire = availableTires[0];
@@ -1053,7 +1054,6 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   // Re-inject cached quote if delivery known, no new quote generated, and order not yet confirmed
-  const isConfirmationMsg = !!extractEmail(text);
   if (!quoteContext && (session.confirmedModalidad || session.modalidad) && session.lastCombinedQuote && !session.logged && !session.promoAnswered && !isConfirmationMsg) {
     quoteContext = '\n\n[QUOTE:\n' + session.lastCombinedQuote + ']';
     console.log('[QUOTE REINJECTED]');
