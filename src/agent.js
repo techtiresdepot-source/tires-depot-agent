@@ -533,6 +533,7 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
   3. *Pickup* → sin monte, sin descuento, el cliente recoge en tienda
 - NUNCA incluyas monte en la cotización si el cliente no confirmó explícitamente que va a montar.
 - Si el cliente dice 'llevarme las gomas', 'paso a buscarlas', 'recoger', 'pickup', 'solo quiero las gomas' → es Pickup.
+- Cuando menciones delivery en preguntas o respuestas, SIEMPRE especifica: 'delivery gratis en el área de Miami'.
 - SIEMPRE incluye todas las selecciones previas en la cotización final, no solo la última.
 
 MANEJO DE PREGUNTAS FUERA DEL FLUJO (crítico):
@@ -569,6 +570,7 @@ Después pregunta cuántas llantas necesita y cómo prefiere recibirlas. Hay 3 o
 ESTILO:
 - Español por defecto. Inglés solo si el cliente escribe en inglés.
 - ULTRA CORTO. Frases sueltas. Máximo 2 líneas. Sin cortesías, sin introducciones, sin despedidas.
+- UNA SOLA PREGUNTA POR MENSAJE. Nunca combines dos preguntas en el mismo mensaje. Primero resuelve la selección de llanta, LUEGO (en el siguiente mensaje) pregunta la modalidad de entrega.
 - Si tienes [INVENTORY DATA] → lista TODOS los productos numerados inmediatamente, sin preámbulo ni frases como 'tengo disponibles' o 'aquí están'. NUNCA digas 'voy a buscar' o 'espera que busco' si ya tienes [INVENTORY DATA] — la búsqueda YA se realizó. Muestra la lista directamente.
 - Sin resultados para marca específica → di que no hay de esa marca y muestra inmediatamente las opciones disponibles de otras marcas para esa medida/posición. No esperes a que el cliente pregunte.
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
@@ -1010,8 +1012,11 @@ async function handleMessage(userId, incomingText, platform) {
     let tire = availableTires[0];
 
     const isJustNumber = /^\s*\d+\s*$/.test(text);
+    // Also detect leading number: "4 paso", "3 delivery" — number at start = selection
+    const leadingNum = text.match(/^\s*(\d+)\s+\w/);
     const pickMatch = text.match(/(?:número?|opción|el|la|#)\s*([1-9][0-9]?)(?:\s|$)/i) ||
-                      (isJustNumber ? text.match(/(\d+)/) : null);
+                      (isJustNumber ? text.match(/(\d+)/) : null) ||
+                      (leadingNum && availableTires.length > 0 ? leadingNum : null);
 
     if (pickMatch) {
       const idx = parseInt(pickMatch[1]) - 1;
@@ -1023,7 +1028,7 @@ async function handleMessage(userId, incomingText, platform) {
     );
     if (brandPick >= 0) tire = session.current.tires[brandPick];
 
-    if (isJustNumber || pickMatch || brandPick >= 0) {
+    if (isJustNumber || pickMatch || brandPick >= 0 || leadingNum) {
       const posKey = session.current.shownPositions[session.current.shownPositions.length - 1] || 'default';
       session.selectedTires[posKey] = tire;
     }
