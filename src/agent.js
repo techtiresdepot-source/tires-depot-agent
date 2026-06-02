@@ -192,8 +192,8 @@ async function fetchAllInventory() {
     page++;
   }
 
-  // Debug: log stock fields for Firestone products specifically
-  const firestones = all.filter(p => p.name.toUpperCase().includes('FIRESTONE'));
+  // Debug: log stock fields for Firestone and 11R22.5 products specifically
+  const firestones = all.filter(p => p.name.toUpperCase().includes('FIRESTONE') || p.name.toUpperCase().includes('11R22'));
   if (firestones.length > 0) {
     firestones.slice(0,3).forEach(p => {
       console.log(`[FIRESTONE RAW] "${p.name}" stock_status=${p.stock_status} stock_qty=${p.stock_quantity} meta_stock=${stockFromMeta(p)} price=${p.price} regular_price=${p.regular_price}`);
@@ -219,7 +219,7 @@ async function fetchAllInventory() {
     name:     p.name,
     price:    parseFloat(p.price) || parseFloat(p.regular_price) || parseFloat(p.sale_price) || 0,
     stock:    (p.stock_quantity ?? 0) || stockFromMeta(p),
-    inStock:  p.stock_status === 'instock' || p.in_stock === true || (p.stock_quantity != null && p.stock_quantity > 0) || stockFromMeta(p) > 0,
+    inStock:  p.stock_status === 'instock' || p.in_stock === true || p.stock_status !== 'outofstock' || (p.stock_quantity != null && p.stock_quantity > 0) || stockFromMeta(p) > 0,
     tags:     p.tags || [],
     size:     attr(p,'tamano') || attr(p,'tamaño') || attr(p,'size') || sizeFromName(p.name),
     brand:    attr(p,'marca') || attr(p,'brand') || attr(p,'pa_brand') || brandFromTags(p) || brandFromName(p.name),
@@ -230,7 +230,7 @@ async function fetchAllInventory() {
   mapped.filter(p => !p.inStock || p.price <= 0).slice(0,10).forEach(p =>
     console.log(`[FILTERED OUT] "${p.name}" inStock=${p.inStock} price=${p.price} qty=${p.stock} status=${p.stock_status}`)
   );
-  cache.data = mapped.filter(p => (p.inStock || p.stock > 0) && p.price > 0);
+  cache.data = mapped.filter(p => p.price > 0 && p.stock_status !== 'outofstock');
   cache.ts = Date.now();
 
   // Debug: log brand resolution for first 5 products
@@ -572,7 +572,7 @@ ESTILO:
 - ULTRA CORTO. Frases sueltas. Máximo 2 líneas. Sin cortesías, sin introducciones, sin despedidas.
 - UNA SOLA PREGUNTA POR MENSAJE. Nunca combines dos preguntas en el mismo mensaje. Primero resuelve la selección de llanta, LUEGO (en el siguiente mensaje) pregunta la modalidad de entrega.
 - Si tienes [INVENTORY DATA] → lista TODOS los productos numerados inmediatamente, sin preámbulo ni frases como 'tengo disponibles' o 'aquí están'. NUNCA digas 'voy a buscar' o 'espera que busco' si ya tienes [INVENTORY DATA] — la búsqueda YA se realizó. Muestra la lista directamente.
-- Sin resultados para marca específica → di que no hay de esa marca y muestra inmediatamente las opciones disponibles de otras marcas para esa medida/posición. No esperes a que el cliente pregunte.
+- Sin resultados para la marca exacta → revisa si hay otro modelo de esa marca en la lista. Si SÍ hay → di 'No tenemos ese modelo específico pero sí tenemos [marca] en [modelo alternativo]' y ponlo primero. Si NO hay → di que no hay esa marca y muestra las alternativas disponibles. No esperes a que el cliente pregunte.
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
 - Si el cliente dice cuántas llantas de cada posición necesita (ej: "2 steer y 8 traction") → muestra primero los resultados de una posición y luego di que buscarás la otra. No preguntes confirmaciones innecesarias.
 - Cuando el cliente responda con un número después de ver una lista de opciones, interpreta ese número como la SELECCIÓN de esa opción (ej: responde "2" → elige la opción #2 de la lista), NO como cantidad. La cantidad ya se conoce del mensaje inicial.
@@ -900,7 +900,11 @@ async function handleMessage(userId, incomingText, platform) {
           const list = tiresNoBrand.map((t,i) =>
             `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruckRetry ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
           ).join('\n');
-          inventoryContext = `\n\n[INVENTORY DATA: BÚSQUEDA COMPLETADA — No hay ${brandForSearch} en ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. Búsqueda ya realizada, NO digas que vas a buscar. Muestra AHORA estas alternativas (${tiresNoBrand.length}):\n${list}]`;
+          const brandInAlts = tiresNoBrand.some(t => (t.brand||'').toLowerCase() === brandForSearch.toLowerCase());
+          const altNote = brandInAlts
+            ? `No hay ${brandForSearch} en ese modelo exacto, pero SÍ hay OTRO MODELO de ${brandForSearch} en la lista — DESTÁCALO PRIMERO. Otras marcas también disponibles.`
+            : `No hay ${brandForSearch} disponible en esa medida/posición. Muestra alternativas.`;
+          inventoryContext = `\n\n[INVENTORY DATA: ${altNote} Opciones en ${session.current.size}${session.current.position?' pos:'+session.current.position:''} (${tiresNoBrand.length}):\n${list}]`;
         } else {
           inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. No hay stock de esa medida/posición.]`;
         }
