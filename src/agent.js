@@ -518,6 +518,7 @@ REGLAS DE PRECIOS:
 
 FINANCIACIÓN:
 ${FINANCE_OPTIONS.map(f => `- ${f.name}: ${f.note}`).join('\n')}
+- Si el cliente quiere aplicar / hacer una application → NO proceses la solicitud tú. Di: "Para tramitar tu aplicación, un asesor te contactará por mensaje de texto al número que tienes registrado para que puedas llenar la solicitud con la financiera. ¿Confirmamos?" Si confirma → responde: "Listo, un asesor se pondrá en contacto contigo pronto." y detente. No pidas más datos.
 
 FLUJO DE CONVERSACIÓN — sigue este orden estricto:
 
