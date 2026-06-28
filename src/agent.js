@@ -38,7 +38,7 @@ const FINANCE_OPTIONS = [
 ];
 
 const POSITION_KEYWORDS = {
-  steer:          ['steer','direccion','dirección','delantera','adelante','front','steering','eje delantero','frontal','delantero'],
+  steer:          ['steer','direccion','dirección','delantera','adelante','front','steering','eje delantero','frontal','delantero','del frente','frente'],
   traction:       ['traction','traccion','tracción','drive','motriz','trasera','rear','eje trasero'],
   trailer:        ['trailer','remolque','todas posiciones'],
   'all position': ['all position','all-position','todas','multi','universal'],
