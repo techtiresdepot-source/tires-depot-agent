@@ -175,7 +175,7 @@ async function logOrderToSheet({ name, company, address, phone, email, order, to
 const WC_BASE = process.env.WC_STORE_URL || 'https://tires-depot.com';
 const WC_KEY  = process.env.WC_CONSUMER_KEY;
 const WC_SEC  = process.env.WC_CONSUMER_SECRET;
-const cache   = { data: null, ts: 0, ttl: 5 * 60 * 1000 }; // 5 min cache
+const cache   = { data: null, ts: 0, ttl: 2 * 60 * 1000 }; // 2 min cache
 
 async function fetchAllInventory() {
   if (cache.data && Date.now() - cache.ts < cache.ttl) return cache.data;
@@ -183,7 +183,7 @@ async function fetchAllInventory() {
   const all  = [];
   let page   = 1;
   while (true) {
-    const res   = await fetch(`${WC_BASE}/wp-json/wc/v3/products?per_page=100&page=${page}&status=publish`, { headers: { Authorization: `Basic ${auth}` }, signal: AbortSignal.timeout(15000) });
+    const res   = await fetch(`${WC_BASE}/wp-json/wc/v3/products?per_page=100&page=${page}&status=publish&_fields=id,name,price,regular_price,sale_price,stock_status,stock_quantity,in_stock,manage_stock,purchasable,tags,attributes,categories`, { headers: { Authorization: `Basic ${auth}` }, signal: AbortSignal.timeout(20000) });
     if (!res.ok) throw new Error(`WC API error: ${res.status}`);
     const batch = await res.json();
     if (!batch.length) break;
@@ -214,12 +214,9 @@ async function fetchAllInventory() {
   const mapped = all.map(p => ({
     id:       p.id,
     name:     p.name,
-    price:    parseFloat(p.price) || parseFloat(p.regular_price) || parseFloat(p.sale_price)
-              || parseFloat(p.meta_data?.find(m => m.key === '_price')?.value)
-              || parseFloat(p.meta_data?.find(m => m.key === '_regular_price')?.value)
-              || 0,
+    price:    parseFloat(p.price) || parseFloat(p.regular_price) || parseFloat(p.sale_price) || 0,
     stock:    (p.stock_quantity ?? 0) || stockFromMeta(p),
-    inStock:  p.stock_status === 'instock' || p.in_stock === true || p.stock_status !== 'outofstock' || (p.stock_quantity != null && p.stock_quantity > 0) || stockFromMeta(p) > 0,
+    inStock:  p.stock_status === 'instock' || p.in_stock === true || (p.stock_quantity != null && p.stock_quantity > 0) || stockFromMeta(p) > 0,
     tags:     p.tags || [],
     size:     attr(p,'tamano') || attr(p,'tamaño') || attr(p,'size') || sizeFromName(p.name),
     brand:    attr(p,'marca') || attr(p,'brand') || attr(p,'pa_brand') || brandFromTags(p) || brandFromName(p.name),
@@ -230,7 +227,8 @@ async function fetchAllInventory() {
   mapped.filter(p => !p.inStock || p.price <= 0).slice(0,10).forEach(p =>
     console.log(`[FILTERED OUT] "${p.name}" inStock=${p.inStock} price=${p.price} qty=${p.stock} status=${p.stock_status}`)
   );
-  cache.data = mapped.filter(p => p.price > 0 && p.stock_status !== 'outofstock');
+  cache.data = mapped.filter(p => p.inStock && p.price > 0);
+  console.log(`[CACHE] ${cache.data.length} products in cache (from ${all.length} total)`);
   cache.ts = Date.now();
 
   // Debug: log brand resolution for first 5 products
