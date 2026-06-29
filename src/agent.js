@@ -5,6 +5,8 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const BOT_VERSION = '2026-06-29-inventory-direct-v2';
+console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
 const BIZ = {
@@ -1189,6 +1191,7 @@ async function handleMessage(userId, incomingText, platform) {
           ? '| Monte disponible'
           : '| NO PRESTAMOS SERVICIO DE MONTE PARA ESTA MEDIDA — no decir que es gratis, decir que no ofrecemos instalación';
         const list = tires.map((t,i) => formatInventoryOption(t, i, isTruck)).join('\n');
+        console.log(`[INVENTORY DIRECT ${BOT_VERSION}] ${tires.map(t => `${t.name}=$${t.price}/${t.stock}`).join(' | ')}`);
         const brandLabel  = session.current.brand  ? ` | Marca: ${session.current.brand}` : '';
         const originLabel = session.current.origin ? ` | Origen: ${session.current.origin}` : ' | Sin filtro de origen (mostrar todas las marcas disponibles)';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.current.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
