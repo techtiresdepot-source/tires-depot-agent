@@ -32,10 +32,10 @@ const BIZ = {
 };
 
 const FINANCE_OPTIONS = [
-  { name: 'Snap Finance',           note: 'Aprobación en minutos, sin crédito requerido' },
-  { name: 'Acima',                  note: 'Lease-to-own, sin score mínimo' },
-  { name: 'American First Finance', note: 'Financiación flexible, sin depósito' },
-  { name: 'Koalafi',                note: 'Aprobación rápida, sin crédito perfecto' },
+  { name: 'Snap Finance',           note: 'Aprobación en minutos, sin crédito requerido', noteEn: 'Approval in minutes, no credit required' },
+  { name: 'Acima',                  note: 'Lease-to-own, sin score mínimo', noteEn: 'Lease-to-own, no minimum score' },
+  { name: 'American First Finance', note: 'Financiación flexible, sin depósito', noteEn: 'Flexible financing, no deposit' },
+  { name: 'Koalafi',                note: 'Aprobación rápida, sin crédito perfecto', noteEn: 'Fast approval, perfect credit not required' },
 ];
 
 const POSITION_KEYWORDS = {
@@ -577,20 +577,23 @@ function wantsFinancingHandoff(text, session) {
 }
 
 function isEnglishMessage(text) {
-  return /\b(hi|hello|hey|how much|price|quote|tire|tires|need|looking|front|rear|drive|steer|trailer|delivery|pickup|financing|finance|application|wholesale|bulk|fleet|yes|no|thanks|thank you)\b/i.test(text);
+  const spanishSignals = /\b(hola|buen[oa]s?|quiero|quer[ií]a|tienes?|tienen|ofrecen|ofreces|necesito|busco|precio|precios|cu[aá]nto|cuanto|medida|llanta|llantas|goma|gomas|financiaci[oó]n|financiamiento|cr[eé]dito|aplicaci[oó]n|asesor|mayor|mayoreo|recoger|env[ií]o|entrega|gracias|si|sí)\b/i;
+  if (spanishSignals.test(text)) return false;
+  return /\b(hi|hello|hey|how much|price|quote|tire|tires|need|looking|front|rear|drive|steer|trailer|delivery|pickup|financing|application|wholesale|bulk|fleet|yes|no|thanks|thank you)\b/i.test(text);
 }
 
 function financingInfoReply(text='') {
-  const lines = FINANCE_OPTIONS.map(f => `• *${f.name}*: ${f.note}`).join('\n');
   if (isEnglishMessage(text)) {
+    const lines = FINANCE_OPTIONS.map(f => `• *${f.name}*: ${f.noteEn}`).join('\n');
     return `We have these 4 financing options:\n\n${lines}\n\nDo you need financing?`;
   }
+  const lines = FINANCE_OPTIONS.map(f => `• *${f.name}*: ${f.note}`).join('\n');
   return `Tenemos estas 4 opciones de financiación:\n\n${lines}\n\n¿Necesitas financiación?`;
 }
 
 function financingAdvisorReply(text='') {
-  if (isEnglishMessage(text)) return 'Perfect. An advisor will assist you as soon as possible.';
-  return 'Perfecto. Un asesor te atenderá a la mayor brevedad posible.';
+  if (isEnglishMessage(text)) return 'An advisor will assist you as soon as possible.';
+  return 'Te atenderemos a la mayor brevedad posible.';
 }
 
 function wantsWholesale(text) {
@@ -598,8 +601,8 @@ function wantsWholesale(text) {
 }
 
 function advisorHandoffReply(text='') {
-  if (isEnglishMessage(text)) return 'Perfect. An advisor will assist you as soon as possible.';
-  return 'Perfecto. Un asesor te atenderá a la mayor brevedad posible.';
+  if (isEnglishMessage(text)) return 'An advisor will assist you as soon as possible.';
+  return 'Te atenderemos a la mayor brevedad posible.';
 }
 
 function asksOutOfDeliveryZone(text) {
@@ -696,6 +699,11 @@ ${FINANCE_OPTIONS.map(f => `- ${f.name}: ${f.note}`).join('\n')}
 VENTAS AL POR MAYOR:
 - Si el cliente pregunta por compra al por mayor, mayorista, mayoreo, wholesale, flotas o volumen → el sistema transferirá a un asesor. Después de transferir, termina la conversación: no pidas datos, no cotices y no preguntes nada más.
 
+TRANSFERENCIA A ASESOR:
+- Cuando transfieras a un asesor, di únicamente: "Te atenderemos a la mayor brevedad posible." En inglés: "An advisor will assist you as soon as possible."
+- NUNCA digas "en un momento", "enseguida", "en seguida", "pronto", "pronto te atenderemos", "one moment", "shortly" ni frases que prometan atención inmediata.
+- Después de transferir a asesor, termina la conversación. No hagas preguntas adicionales.
+
 FLUJO DE CONVERSACIÓN — sigue este orden estricto:
 
 PASO 1 — SALUDO (SIEMPRE PRIMERO):
@@ -756,7 +764,7 @@ Después pregunta cuántas llantas necesita y cómo prefiere recibirlas. Hay 3 o
 3. Pickup → pasa a recoger al local, sin descuento, sin delivery
 
 ESTILO:
-- Responde en el mismo idioma del cliente. Español por defecto. Inglés si el cliente escribe en inglés. No mezcles idiomas salvo nombres técnicos como Steer, Traction, Trailer, Pickup o Delivery.
+- Responde en el mismo idioma del cliente. Español por defecto. Inglés solo si el mensaje completo del cliente está claramente en inglés. Si el cliente escribe en español pero menciona un nombre propio en inglés como "American First Finance", responde en español. No mezcles idiomas salvo nombres técnicos como Steer, Traction, Trailer, Pickup, Delivery o nombres de financieras.
 - ULTRA CORTO. Frases sueltas. Máximo 2 líneas. Sin cortesías, sin introducciones, sin despedidas.
 - UNA SOLA PREGUNTA POR MENSAJE. Nunca combines dos preguntas en el mismo mensaje. Primero resuelve la selección de llanta, LUEGO (en el siguiente mensaje) pregunta la modalidad de entrega.
 - Si tienes [INVENTORY DATA] → lista TODOS los productos numerados inmediatamente, sin preámbulo ni frases como 'tengo disponibles' o 'aquí están'. NUNCA digas 'voy a buscar' o 'espera que busco' si ya tienes [INVENTORY DATA] — la búsqueda YA se realizó. Muestra la lista directamente.
