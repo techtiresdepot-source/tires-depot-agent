@@ -558,12 +558,20 @@ function wantsFinancingHandoff(text, session) {
   return /(?:necesito|quiero|me interesa|voy a|para)\s+(?:financiaci[oó]n|financiar|finance|financing)|aplicar|aplicaci[oó]n|application|solicitud|tramitar/i.test(text);
 }
 
-function financingInfoReply() {
+function isEnglishMessage(text) {
+  return /\b(hi|hello|hey|how much|price|quote|tire|tires|need|looking|front|rear|drive|steer|trailer|delivery|pickup|financing|finance|application|wholesale|bulk|fleet|yes|no|thanks|thank you)\b/i.test(text);
+}
+
+function financingInfoReply(text='') {
   const lines = FINANCE_OPTIONS.map(f => `• *${f.name}*: ${f.note}`).join('\n');
+  if (isEnglishMessage(text)) {
+    return `We have these 4 financing options:\n\n${lines}\n\nDo you need financing?`;
+  }
   return `Tenemos estas 4 opciones de financiación:\n\n${lines}\n\n¿Necesitas financiación?`;
 }
 
-function financingAdvisorReply() {
+function financingAdvisorReply(text='') {
+  if (isEnglishMessage(text)) return 'Perfect. An advisor will assist you as soon as possible.';
   return 'Perfecto. Un asesor te atenderá a la mayor brevedad posible.';
 }
 
@@ -571,7 +579,8 @@ function wantsWholesale(text) {
   return /mayorista|mayoreo|al por mayor|por mayor|wholesale|distribuidor|distribuci[oó]n|bulk|volumen|flota|fleet/i.test(text);
 }
 
-function advisorHandoffReply() {
+function advisorHandoffReply(text='') {
+  if (isEnglishMessage(text)) return 'Perfect. An advisor will assist you as soon as possible.';
   return 'Perfecto. Un asesor te atenderá a la mayor brevedad posible.';
 }
 
@@ -655,7 +664,7 @@ VENTAS AL POR MAYOR:
 FLUJO DE CONVERSACIÓN — sigue este orden estricto:
 
 PASO 1 — SALUDO (SIEMPRE PRIMERO):
-- El PRIMER mensaje SIEMPRE debe aclarar que eres un bot/asistente virtual de Tires Depot, dar una bienvenida breve y preguntar directamente qué medida de llanta necesita. Ejemplo: "¡Hola! Soy el asistente virtual de Tires Depot. ¿Qué medida de llanta necesitas?" NO pidas el nombre — se obtiene automáticamente del contacto de WhatsApp.
+- El PRIMER mensaje SIEMPRE debe aclarar que eres un bot/asistente virtual de Tires Depot, dar una bienvenida breve y preguntar directamente qué medida de llanta necesita. Si el cliente escribe en español: "¡Hola! Soy el asistente virtual de Tires Depot. ¿Qué medida de llanta necesitas?" Si escribe en inglés: "Hi! I'm the Tires Depot virtual assistant. What tire size do you need?" NO pidas el nombre — se obtiene automáticamente del contacto de WhatsApp.
 
 PASO 2 — TELÉFONO (solo si [NEEDS_PHONE]):
 - Si ves [NEEDS_PHONE] en el contexto → pide el número de teléfono antes de continuar
@@ -711,7 +720,7 @@ Después pregunta cuántas llantas necesita y cómo prefiere recibirlas. Hay 3 o
 3. Pickup → pasa a recoger al local, sin descuento, sin delivery
 
 ESTILO:
-- Español por defecto. Inglés solo si el cliente escribe en inglés.
+- Responde en el mismo idioma del cliente. Español por defecto. Inglés si el cliente escribe en inglés. No mezcles idiomas salvo nombres técnicos como Steer, Traction, Trailer, Pickup o Delivery.
 - ULTRA CORTO. Frases sueltas. Máximo 2 líneas. Sin cortesías, sin introducciones, sin despedidas.
 - UNA SOLA PREGUNTA POR MENSAJE. Nunca combines dos preguntas en el mismo mensaje. Primero resuelve la selección de llanta, LUEGO (en el siguiente mensaje) pregunta la modalidad de entrega.
 - Si tienes [INVENTORY DATA] → lista TODOS los productos numerados inmediatamente, sin preámbulo ni frases como 'tengo disponibles' o 'aquí están'. NUNCA digas 'voy a buscar' o 'espera que busco' si ya tienes [INVENTORY DATA] — la búsqueda YA se realizó. Muestra la lista directamente.
@@ -765,7 +774,7 @@ async function handleMessage(userId, incomingText, platform) {
   if (isWA && !session.phone) session.phone = userId;
 
   if (session.conversationEnded) {
-    const reply = 'Un asesor te atenderá a la mayor brevedad posible.';
+    const reply = advisorHandoffReply(text);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -775,7 +784,7 @@ async function handleMessage(userId, incomingText, platform) {
   if (wantsWholesale(text)) {
     session.conversationEnded = true;
     session.wholesaleTransferRequested = true;
-    const reply = advisorHandoffReply();
+    const reply = advisorHandoffReply(text);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -788,7 +797,7 @@ async function handleMessage(userId, incomingText, platform) {
     session.awaitingFinanceNeedAnswer = false;
     session.financeTransferRequested = true;
     session.conversationEnded = true;
-    const reply = financingAdvisorReply();
+    const reply = financingAdvisorReply(text);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -798,7 +807,7 @@ async function handleMessage(userId, incomingText, platform) {
 
   if (wantsFinancing(text)) {
     session.awaitingFinanceNeedAnswer = true;
-    const reply = financingInfoReply();
+    const reply = financingInfoReply(text);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
