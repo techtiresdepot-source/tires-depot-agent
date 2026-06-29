@@ -567,6 +567,14 @@ function financingAdvisorReply() {
   return 'Perfecto. Un asesor te atenderá a la mayor brevedad posible.';
 }
 
+function wantsWholesale(text) {
+  return /mayorista|mayoreo|al por mayor|por mayor|wholesale|distribuidor|distribuci[oó]n|bulk|volumen|flota|fleet/i.test(text);
+}
+
+function advisorHandoffReply() {
+  return 'Perfecto. Un asesor te atenderá a la mayor brevedad posible.';
+}
+
 // ── Search session helpers ───────────────────────────────────────────────────
 function getLastSearch(session) {
   if (!session.searches) return null;
@@ -641,10 +649,13 @@ ${FINANCE_OPTIONS.map(f => `- ${f.name}: ${f.note}`).join('\n')}
 - Si el cliente pregunta por financiación → da información breve de las cuatro empresas y pregunta si necesita financiación.
 - Si el cliente dice que necesita financiación, quiere aplicar o pide application → NO preguntes con qué compañía quiere hacer el trámite. El sistema transferirá a un asesor. Después de transferir, termina la conversación: no pidas datos, no retomes búsqueda de llantas, no preguntes nada más.
 
+VENTAS AL POR MAYOR:
+- Si el cliente pregunta por compra al por mayor, mayorista, mayoreo, wholesale, flotas o volumen → el sistema transferirá a un asesor. Después de transferir, termina la conversación: no pidas datos, no cotices y no preguntes nada más.
+
 FLUJO DE CONVERSACIÓN — sigue este orden estricto:
 
 PASO 1 — SALUDO (SIEMPRE PRIMERO):
-- El PRIMER mensaje SIEMPRE es un saludo breve de bienvenida a Tires Depot y preguntar directamente qué medida de llanta necesita. NO pidas el nombre — se obtiene automáticamente del contacto de WhatsApp.
+- El PRIMER mensaje SIEMPRE debe aclarar que eres un bot/asistente virtual de Tires Depot, dar una bienvenida breve y preguntar directamente qué medida de llanta necesita. Ejemplo: "¡Hola! Soy el asistente virtual de Tires Depot. ¿Qué medida de llanta necesitas?" NO pidas el nombre — se obtiene automáticamente del contacto de WhatsApp.
 
 PASO 2 — TELÉFONO (solo si [NEEDS_PHONE]):
 - Si ves [NEEDS_PHONE] en el contexto → pide el número de teléfono antes de continuar
@@ -758,6 +769,17 @@ async function handleMessage(userId, incomingText, platform) {
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
+  }
+
+  if (wantsWholesale(text)) {
+    session.conversationEnded = true;
+    session.wholesaleTransferRequested = true;
+    const reply = advisorHandoffReply();
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    console.log(`[WHOLESALE HANDOFF] phone=${session.phone || userId} text="${text.substring(0,80)}"`);
     return reply;
   }
 
