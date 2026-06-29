@@ -396,6 +396,11 @@ function filterTires(size, position, brand, origin) {
   return tires.sort((a,b) => a.price - b.price);
 }
 
+function formatInventoryOption(tire, index, isTruck) {
+  const label = tire.name || `${tire.brand || 'Llanta'} ${tire.size || ''}`.trim();
+  return `${index+1}. *${label}* — $${tire.price}/llanta | ${tire.stock} en stock${isTruck ? ` | Pos: ${tire.position||'N/A'} | Monte: $${getMountCost(tire.size)}/c` : ''}`;
+}
+
 function getRimSize(size) {
   const m = (size||'').match(/(?:[Rr\/\-])(\d+\.?\d*)$/);
   return m ? parseFloat(m[1]) : 0;
@@ -812,6 +817,7 @@ ESTILO:
 - Tono consultivo, no pushy. No conviertas cada mensaje en "¿qué medida?" o "¿qué posición?". Haz esas preguntas solo cuando sean necesarias para ayudar.
 - UNA SOLA PREGUNTA POR MENSAJE. Nunca combines dos preguntas en el mismo mensaje. Primero resuelve la selección de llanta, LUEGO (en el siguiente mensaje) pregunta la modalidad de entrega.
 - Si tienes [INVENTORY DATA] → lista TODOS los productos numerados inmediatamente, sin preámbulo ni frases como 'tengo disponibles' o 'aquí están'. NUNCA digas 'voy a buscar' o 'espera que busco' si ya tienes [INVENTORY DATA] — la búsqueda YA se realizó. Muestra la lista directamente.
+- Al listar inventario, conserva EXACTAMENTE el nombre, precio, stock, posición y orden que vienen en [INVENTORY DATA]. No resumas el nombre a solo marca. No cambies Firestone/Jet Way/Pirelli/Continental por otras marcas. No cambies precios ni stock.
 - Nunca copies literalmente "[INVENTORY DATA]" ni ningún tag interno en la respuesta al cliente.
 - Sin resultados para la marca exacta → revisa si hay otro modelo de esa marca en la lista. Si SÍ hay → di 'No tenemos ese modelo específico pero sí tenemos [marca] en [modelo alternativo]' y ponlo primero. Si NO hay → di que no hay esa marca y muestra las alternativas disponibles. No esperes a que el cliente pregunte.
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
@@ -1177,9 +1183,7 @@ async function handleMessage(userId, incomingText, platform) {
         const mountNote = isTruck
           ? '| Monte disponible'
           : '| NO PRESTAMOS SERVICIO DE MONTE PARA ESTA MEDIDA — no decir que es gratis, decir que no ofrecemos instalación';
-        const list = tires.map((t,i) =>
-          `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruck ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
-        ).join('\n');
+        const list = tires.map((t,i) => formatInventoryOption(t, i, isTruck)).join('\n');
         const brandLabel  = session.current.brand  ? ` | Marca: ${session.current.brand}` : '';
         const originLabel = session.current.origin ? ` | Origen: ${session.current.origin}` : ' | Sin filtro de origen (mostrar todas las marcas disponibles)';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.current.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
@@ -1207,9 +1211,7 @@ async function handleMessage(userId, incomingText, platform) {
           const nextTires = filterTires(session.current.size, nextPos, null, null);
           if (nextTires.length > 0) {
             const isTruckNext = getRimSize(session.current.size) >= 22.5;
-            const nextList = nextTires.map((t,i) =>
-              `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruckNext ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
-            ).join('\n');
+            const nextList = nextTires.map((t,i) => formatInventoryOption(t, i, isTruckNext)).join('\n');
             inventoryContext += `\n\n[INVENTORY DATA POSICIÓN ${nextPos.toUpperCase()}: ${nextTires.length} llanta(s):\n${nextList}]`;
             session.current.tires = nextTires;
           }
@@ -1235,9 +1237,7 @@ async function handleMessage(userId, incomingText, platform) {
         const tiresNoBrand = filterTires(session.current.size, session.current.position, null, session.current.origin);
         if (tiresNoBrand.length > 0) {
           session.current.tires = tiresNoBrand;
-          const list = tiresNoBrand.map((t,i) =>
-            `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruckRetry ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
-          ).join('\n');
+          const list = tiresNoBrand.map((t,i) => formatInventoryOption(t, i, isTruckRetry)).join('\n');
           const brandInAlts = tiresNoBrand.some(t => (t.brand||'').toLowerCase() === brandForSearch.toLowerCase());
           const altNote = brandInAlts
             ? `No hay ${brandForSearch} en ese modelo exacto, pero SÍ hay OTRO MODELO de ${brandForSearch} en la lista — DESTÁCALO PRIMERO. Otras marcas también disponibles.`
@@ -1267,9 +1267,7 @@ async function handleMessage(userId, incomingText, platform) {
           const nextTires = filterTires(session.current.size, nextPos, null, null);
           if (nextTires.length > 0) {
             const isTruckNext = getRimSize(session.current.size) >= 22.5;
-            const nextList = nextTires.map((t,i) =>
-              `${i+1}. *${t.brand}* — $${t.price}/llanta | ${t.stock} en stock${isTruckNext ? ` | Pos: ${t.position||'N/A'} | Monte: $${getMountCost(t.size)}/c` : ''}`
-            ).join('\n');
+            const nextList = nextTires.map((t,i) => formatInventoryOption(t, i, isTruckNext)).join('\n');
             inventoryContext += `\n\n[INVENTORY DATA POSICIÓN ${nextPos.toUpperCase()}: ${nextTires.length} llanta(s):\n${nextList}]`;
             session.current.tires = nextTires;
           }
@@ -1417,12 +1415,12 @@ async function handleMessage(userId, incomingText, platform) {
   let searchesSummary = '';
   if (session.searches && session.searches.length > 0) {
     const summary = session.searches.map(s =>
-      `${s.size}${s.position?' '+s.position:''}: ${(s.tires||[]).map((t,i)=>`${i+1}. ${t.brand} $${t.price}${t.stock != null ? ` (${t.stock} stock)` : ''}${t.position ? ` ${t.position}` : ''}`).join('; ')}`
+      `${s.size}${s.position?' '+s.position:''}: ${(s.tires||[]).map((t,i)=>`${i+1}. ${t.name || t.brand} $${t.price}${t.stock != null ? ` (${t.stock} stock)` : ''}${t.position ? ` ${t.position}` : ''}`).join('; ')}`
     ).join(' | ');
     searchesSummary = `\n[BÚSQUEDAS EN SESIÓN: ${summary}]`;
   }
 
-  // ── Send to Claude ────────────────────────────────────────────────────────
+  // ── Send assistant request ────────────────────────────────────────────────
   const userMessage = text + contactContext + needsPhone + searchesSummary + inventoryContext + quoteContext + emailOffer;
 
   session.history.push({ role:'user', content: userMessage });
@@ -1439,7 +1437,7 @@ async function handleMessage(userId, incomingText, platform) {
 
   const reply = withInitialAssistantIntro(response.content[0].text, text, isFirstInteraction);
   session.history.push({ role:'assistant', content: reply });
-  // Extract total, order lines and modalidad from Claude's reply
+  // Extract total, order lines and modalidad from assistant reply
   const replyTotalMatch = reply.match(/TOTAL[^$]*\$([\d,]+\.\d{2})/i);
   if (replyTotalMatch) {
     session.lastQuoteTotal = replyTotalMatch[1].replace(/,/g,'');
