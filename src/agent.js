@@ -522,6 +522,11 @@ function extractGeneralQuantity(text) {
   return m ? validRequestedQty(m[1]) : null;
 }
 
+function extractBareQuantity(text) {
+  const m = text.match(/^\s*([1-9][0-9]?)\s*$/);
+  return m ? validRequestedQty(m[1]) : null;
+}
+
 function findSelection(text, tires) {
   if (!tires || tires.length === 0) return null;
   const isJustNumber = /^\s*\d+\s*$/.test(text);
@@ -559,7 +564,7 @@ function financingInfoReply() {
 }
 
 function financingAdvisorReply() {
-  return 'Perfecto, te transfiero con un asesor para que pueda enviarte por mensaje de texto la aplicación de financiamiento. Un momento por favor.';
+  return 'Perfecto. Un asesor te atenderá a la mayor brevedad posible.';
 }
 
 // ── Search session helpers ───────────────────────────────────────────────────
@@ -634,7 +639,7 @@ REGLAS DE PRECIOS:
 FINANCIACIÓN:
 ${FINANCE_OPTIONS.map(f => `- ${f.name}: ${f.note}`).join('\n')}
 - Si el cliente pregunta por financiación → da información breve de las cuatro empresas y pregunta si necesita financiación.
-- Si el cliente dice que necesita financiación, quiere aplicar o pide application → NO preguntes con qué compañía quiere hacer el trámite. El sistema transferirá a un asesor para que le envíe por mensaje de texto la aplicación.
+- Si el cliente dice que necesita financiación, quiere aplicar o pide application → NO preguntes con qué compañía quiere hacer el trámite. El sistema transferirá a un asesor. Después de transferir, termina la conversación: no pidas datos, no retomes búsqueda de llantas, no preguntes nada más.
 
 FLUJO DE CONVERSACIÓN — sigue este orden estricto:
 
@@ -664,7 +669,7 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
 - SIEMPRE incluye todas las selecciones previas en la cotización final, no solo la última.
 
 MANEJO DE PREGUNTAS FUERA DEL FLUJO (crítico):
-- Si el cliente pregunta algo general (monte, válvula, delivery, financiación, ubicación) mientras ya hay una búsqueda activa → responde brevemente y LUEGO retoma: si ya mostraste opciones di "Retomando tu búsqueda, ¿cuál de estas opciones prefieres?" y repite la lista. NUNCA pidas de nuevo la medida o posición si ya las tienes.
+- Si el cliente pregunta algo general (monte, válvula, delivery, ubicación) mientras ya hay una búsqueda activa → responde brevemente y LUEGO retoma: si ya mostraste opciones di "Retomando tu búsqueda, ¿cuál de estas opciones prefieres?" y repite la lista COMPLETA de opciones disponibles. NUNCA reduzcas la lista a 3 si originalmente había más opciones. NUNCA pidas de nuevo la medida o posición si ya las tienes.
 
 PASO 4 — CONFIRMACIÓN Y DATOS DEL CLIENTE:
 - Después de mostrar cotización final → pregunta: "¿Confirmamos el pedido?"
@@ -748,10 +753,19 @@ async function handleMessage(userId, incomingText, platform) {
   // WhatsApp: phone is the userId directly
   if (isWA && !session.phone) session.phone = userId;
 
+  if (session.conversationEnded) {
+    const reply = 'Un asesor te atenderá a la mayor brevedad posible.';
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
+  }
+
   // Financing flow is deterministic: info first, advisor handoff only if needed.
   if (wantsFinancingHandoff(text, session)) {
     session.awaitingFinanceNeedAnswer = false;
     session.financeTransferRequested = true;
+    session.conversationEnded = true;
     const reply = financingAdvisorReply();
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
@@ -903,12 +917,25 @@ async function handleMessage(userId, incomingText, platform) {
   // in this flow they are option indexes unless paired with tire units/position.
   const qtyPosMatches = extractPositionQuantities(text);
   const generalQty = extractGeneralQuantity(text);
+  let inputConsumedAsQuantity = false;
   if (qtyPosMatches.length > 0) {
     qtyPosMatches.forEach(({ posKey, qty }) => setRequestedQty(session, posKey, qty));
+    session.awaitingQuantity = false;
+    inputConsumedAsQuantity = true;
     console.log('[QTY BY POSITION]', JSON.stringify(session.requestedQtyByPosition));
   } else if (generalQty) {
     setRequestedQty(session, session.current.position || DEFAULT_POSITION_KEY, generalQty);
+    session.awaitingQuantity = false;
+    inputConsumedAsQuantity = true;
     console.log('[QTY DEFAULT]', JSON.stringify(session.requestedQtyByPosition));
+  } else if (session.awaitingQuantity) {
+    const bareQty = extractBareQuantity(text);
+    if (bareQty) {
+      setRequestedQty(session, getSelectionPositionKey(session), bareQty);
+      session.awaitingQuantity = false;
+      inputConsumedAsQuantity = true;
+      console.log('[QTY BARE]', JSON.stringify(session.requestedQtyByPosition));
+    }
   }
 
   const pos = normalizePosition(text);
@@ -997,6 +1024,10 @@ async function handleMessage(userId, incomingText, platform) {
         const brandLabel  = session.current.brand  ? ` | Marca: ${session.current.brand}` : '';
         const originLabel = session.current.origin ? ` | Origen: ${session.current.origin}` : ' | Sin filtro de origen (mostrar todas las marcas disponibles)';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.current.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
+        const qtyKey = session.current.position || DEFAULT_POSITION_KEY;
+        if (!session.requestedQtyByPosition[qtyKey] && !session.requestedQtyByPosition[DEFAULT_POSITION_KEY]) {
+          session.awaitingQuantity = true;
+        }
 
         if (session.current.position) {
           session.current.shownPositions.push(session.current.position);
@@ -1053,6 +1084,10 @@ async function handleMessage(userId, incomingText, platform) {
             ? `No hay ${brandForSearch} en ese modelo exacto, pero SÍ hay OTRO MODELO de ${brandForSearch} en la lista — DESTÁCALO PRIMERO. Otras marcas también disponibles.`
             : `No hay ${brandForSearch} disponible en esa medida/posición. Muestra alternativas.`;
           inventoryContext = `\n\n[INVENTORY DATA: ${altNote} Opciones en ${session.current.size}${session.current.position?' pos:'+session.current.position:''} (${tiresNoBrand.length}):\n${list}]`;
+          const qtyKey = session.current.position || DEFAULT_POSITION_KEY;
+          if (!session.requestedQtyByPosition[qtyKey] && !session.requestedQtyByPosition[DEFAULT_POSITION_KEY]) {
+            session.awaitingQuantity = true;
+          }
         } else {
           inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. No hay stock de esa medida/posición.]`;
         }
@@ -1098,7 +1133,7 @@ async function handleMessage(userId, incomingText, platform) {
   const _availForSelection = session.current.tires.length > 0
     ? session.current.tires
     : (getLastSearch(session)?.tires || []);
-  const selectedOption = findSelection(text, _availForSelection);
+  const selectedOption = inputConsumedAsQuantity ? null : findSelection(text, _availForSelection);
   if (selectedOption) {
     const posKey = getSelectionPositionKey(session);
     session.selectedTires[posKey] = selectedOption.tire;
@@ -1208,7 +1243,7 @@ async function handleMessage(userId, incomingText, platform) {
   let searchesSummary = '';
   if (session.searches && session.searches.length > 0) {
     const summary = session.searches.map(s =>
-      `${s.size}${s.position?' '+s.position:''}: ${(s.tires||[]).slice(0,3).map(t=>`${t.brand} $${t.price}`).join(', ')}`
+      `${s.size}${s.position?' '+s.position:''}: ${(s.tires||[]).map((t,i)=>`${i+1}. ${t.brand} $${t.price}${t.stock != null ? ` (${t.stock} stock)` : ''}${t.position ? ` ${t.position}` : ''}`).join('; ')}`
     ).join(' | ');
     searchesSummary = `\n[BÚSQUEDAS EN SESIÓN: ${summary}]`;
   }
