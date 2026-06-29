@@ -566,7 +566,7 @@ function getSelectionPositionKey(session) {
 }
 
 function wantsFinancing(text) {
-  return /financiaci[oó]n|financiar|finance|financing|application|aplicaci[oó]n|aplicar|credito|cr[eé]dito/i.test(text);
+  return /financiaci[oó]n|financiamiento|financiar|finance|financing|application|aplicaci[oó]n|aplicar|credito|cr[eé]dito|cuota inicial|inicial|dep[oó]sito|deposit|down payment|how much down/i.test(text);
 }
 
 function wantsFinancingHandoff(text, session) {
@@ -577,9 +577,9 @@ function wantsFinancingHandoff(text, session) {
 }
 
 function isEnglishMessage(text) {
-  const spanishSignals = /\b(hola|buen[oa]s?|quiero|quer[ií]a|tienes?|tienen|ofrecen|ofreces|necesito|busco|precio|precios|cu[aá]nto|cuanto|medida|llanta|llantas|goma|gomas|financiaci[oó]n|financiamiento|cr[eé]dito|aplicaci[oó]n|asesor|mayor|mayoreo|recoger|env[ií]o|entrega|gracias|si|sí)\b/i;
+  const spanishSignals = /\b(hola|buen[oa]s?|quiero|quer[ií]a|tienes?|tienen|ofrecen|ofreces|necesito|busco|precio|precios|cu[aá]nto|cuanto|medida|llanta|llantas|goma|gomas|financiaci[oó]n|financiamiento|cr[eé]dito|aplicaci[oó]n|cuota|inicial|dep[oó]sito|asesor|mayor|mayoreo|recoger|env[ií]o|entrega|gracias|si|sí)\b/i;
   if (spanishSignals.test(text)) return false;
-  return /\b(hi|hello|hey|how much|price|quote|tire|tires|need|looking|front|rear|drive|steer|trailer|delivery|pickup|financing|application|wholesale|bulk|fleet|yes|no|thanks|thank you)\b/i.test(text);
+  return /\b(hi|hello|hey|how much|how much down|down payment|deposit|price|quote|tire|tires|need|looking|front|rear|drive|steer|trailer|delivery|pickup|financing|application|wholesale|bulk|fleet|yes|no|thanks|thank you)\b/i.test(text);
 }
 
 function financingInfoReply(text='') {
@@ -693,7 +693,7 @@ REGLAS DE PRECIOS:
 
 FINANCIACIÓN:
 ${FINANCE_OPTIONS.map(f => `- ${f.name}: ${f.note}`).join('\n')}
-- Si el cliente pregunta por financiación → da información breve de las cuatro empresas y pregunta si necesita financiación.
+- Si el cliente pregunta por financiación, cuota inicial, depósito, down payment o "how much down" → muestra las cuatro opciones de financiación y pregunta si necesita financiación.
 - Si el cliente dice que necesita financiación, quiere aplicar o pide application → NO preguntes con qué compañía quiere hacer el trámite. El sistema transferirá a un asesor. Después de transferir, termina la conversación: no pidas datos, no retomes búsqueda de llantas, no preguntes nada más.
 
 VENTAS AL POR MAYOR:
