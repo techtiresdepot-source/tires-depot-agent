@@ -622,12 +622,32 @@ function outOfDeliveryZoneReply(text='') {
 }
 
 function askSizeForPositionReply(position, text='') {
-  if (isEnglishMessage(text)) return `What size do you need for ${position}?`;
+  if (isEnglishMessage(text)) return `Hi! I'm the Tires Depot virtual assistant. What size do you need for ${position}?`;
   const label = position === 'steer' ? 'delantera'
     : position === 'traction' ? 'tracción'
     : position === 'trailer' ? 'trailer'
     : 'esa posición';
-  return `¿Qué medida necesitas para ${label}?`;
+  return `¡Hola! Soy el asistente virtual de Tires Depot. ¿Qué medida necesitas para ${label}?`;
+}
+
+function isSimpleGreeting(text) {
+  return /^\s*(hola|buenos dias|buenos días|buenas|buenas tardes|buenas noches|hello|hi|hey|good morning|good afternoon|good evening)\s*[!.?]*\s*$/i.test(text);
+}
+
+function isGenericInfoRequest(text) {
+  const asksInfo = /quiero.*(?:informaci[oó]n|info)|quisiera.*(?:informaci[oó]n|info)|m[aá]s informaci[oó]n|mas informacion|me das.*(?:informaci[oó]n|info)|can i get.*(?:info|information)|more info|more information/i.test(text);
+  if (!asksInfo) return false;
+  return !extractTireSize(text)
+    && !normalizePosition(text)
+    && !wantsFinancing(text)
+    && !wantsWholesale(text)
+    && !wantsAdvisor(text)
+    && !asksOutOfDeliveryZone(text);
+}
+
+function initialGreetingReply(text='') {
+  if (isEnglishMessage(text)) return "Hi! I'm the Tires Depot virtual assistant. What tire size do you need?";
+  return '¡Hola! Soy el asistente virtual de Tires Depot. ¿Qué medida de llanta necesitas?';
 }
 
 // ── Search session helpers ───────────────────────────────────────────────────
@@ -716,7 +736,8 @@ TRANSFERENCIA A ASESOR:
 FLUJO DE CONVERSACIÓN — sigue este orden estricto:
 
 PASO 1 — SALUDO (SIEMPRE PRIMERO):
-- El PRIMER mensaje SIEMPRE debe aclarar que eres un bot/asistente virtual de Tires Depot, dar una bienvenida breve y abrir con una pregunta general. No pidas medida ni posición en el saludo. Si el cliente escribe en español: "¡Hola! Soy el asistente virtual de Tires Depot. ¿Cómo puedo ayudarte?" Si escribe en inglés: "Hi! I'm the Tires Depot virtual assistant. How can I help you?" NO pidas el nombre — se obtiene automáticamente del contacto de WhatsApp.
+- El PRIMER mensaje SIEMPRE debe aclarar que eres un bot/asistente virtual de Tires Depot, dar una bienvenida breve y preguntar la medida. Si el cliente escribe en español: "¡Hola! Soy el asistente virtual de Tires Depot. ¿Qué medida de llanta necesitas?" Si escribe en inglés: "Hi! I'm the Tires Depot virtual assistant. What tire size do you need?" NO pidas el nombre — se obtiene automáticamente del contacto de WhatsApp.
+- Si la sesión se reinició o no tienes historial interno, NO asumas contexto de mensajes anteriores visibles en WhatsApp. Trata el mensaje como conversación nueva y saluda como asistente virtual. Si el mensaje incluye posición/cantidad pero no medida, pregunta la medida para esa posición.
 
 PASO 2 — TELÉFONO (solo si [NEEDS_PHONE]):
 - Si ves [NEEDS_PHONE] en el contexto → pide el número de teléfono antes de continuar
@@ -830,6 +851,14 @@ async function handleMessage(userId, incomingText, platform) {
 
   // WhatsApp: phone is the userId directly
   if (isWA && !session.phone) session.phone = userId;
+
+  if (session.history.length === 0 && (isSimpleGreeting(text) || isGenericInfoRequest(text))) {
+    const reply = initialGreetingReply(text);
+    session.step = 'searching';
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    return reply;
+  }
 
   if (session.conversationEnded) {
     const reply = advisorHandoffReply(text);
