@@ -328,6 +328,23 @@ function normalizeSize(s) {
   return v.replace(/[^A-Z0-9]/g,'');
 }
 
+function extractTireSize(text) {
+  const spaced = text.match(/\b(\d{2,3})\s+(\d{2,3})\s+(\d{2})\s*[\/.]\s*(\d)\b/i);
+  if (spaced) return `${spaced[1]}/${spaced[2]}R${spaced[3]}.${spaced[4]}`.toUpperCase();
+
+  const explicit = text.match(/\b(\d{2,3}\/\d{2,3}R\d{2}(?:\.\d)?|\d{2,3}\/\d{2,3}\/R\d{2}(?:\.\d)?|\d{2,3}\/\d{2,3}\/\d{2}(?:\.\d)?|11R\d{2}(?:\.\d)?|\d{2}R\d{2}(?:\.\d)?)\b/i);
+  if (!explicit) return null;
+  return explicit[1]
+    .replace(/(\d{2,3}\/\d{2,3})\/R/i, '$1R')
+    .replace(/(\d{2,3}\/\d{2,3})\/(\d{2}(?:\.\d)?)/i, '$1R$2')
+    .toUpperCase();
+}
+
+function noStockReply(size, text='') {
+  if (isEnglishMessage(text)) return `Sorry, we don't have tires in size ${size} in stock right now.`;
+  return `Lo siento, no tenemos llantas de la medida ${size} en stock en este momento.`;
+}
+
 function filterTires(size, position, brand, origin) {
   let tires = cache.data || [];
 
@@ -675,6 +692,7 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
 - Cuando el cliente diga 'para atrás' o 'traseras' sin especificar más → pregunta si es Traction o Trailer (son posiciones diferentes).
 - Si el cliente pide varias posiciones en un mensaje → muestra primero los resultados de la primera posición, luego busca la siguiente automáticamente.
 - Con tamaño + posición → muestra TODOS los resultados de [INVENTORY DATA] en lista numerada
+- Si [INVENTORY DATA] dice "Sin resultados" o "No hay stock" → responde que no tenemos llantas de esa medida/posición. NO muestres alternativas, NO inventes marcas, NO repitas búsquedas anteriores.
 - Si piden "la más económica" → destaca la #1 (lista ordenada precio asc)
 - Si mencionan marca → filtra por esa marca SOLO cuando está claramente asociada a esa posición. Ejemplo: 'Firestone delantera y 8 traseras' → Firestone SOLO para delantera, para traseras NO hay filtro de marca. Si el [INVENTORY DATA] no trae filtro de marca, muestra TODAS las marcas disponibles.
 - Si mencionan origen (americanas, vietnamitas, brasileñas, japonesas, indias, camboyanas, etc.) → filtra por el país en el nombre del producto. El filtro de origen aplica SOLO a la búsqueda donde el cliente lo mencionó. Si [INVENTORY DATA] dice 'Sin filtro de origen' → muestra TODAS las marcas disponibles sin filtrar por país, aunque el cliente haya pedido americanas en una búsqueda anterior.
@@ -724,6 +742,7 @@ ESTILO:
 - ULTRA CORTO. Frases sueltas. Máximo 2 líneas. Sin cortesías, sin introducciones, sin despedidas.
 - UNA SOLA PREGUNTA POR MENSAJE. Nunca combines dos preguntas en el mismo mensaje. Primero resuelve la selección de llanta, LUEGO (en el siguiente mensaje) pregunta la modalidad de entrega.
 - Si tienes [INVENTORY DATA] → lista TODOS los productos numerados inmediatamente, sin preámbulo ni frases como 'tengo disponibles' o 'aquí están'. NUNCA digas 'voy a buscar' o 'espera que busco' si ya tienes [INVENTORY DATA] — la búsqueda YA se realizó. Muestra la lista directamente.
+- Nunca copies literalmente "[INVENTORY DATA]" ni ningún tag interno en la respuesta al cliente.
 - Sin resultados para la marca exacta → revisa si hay otro modelo de esa marca en la lista. Si SÍ hay → di 'No tenemos ese modelo específico pero sí tenemos [marca] en [modelo alternativo]' y ponlo primero. Si NO hay → di que no hay esa marca y muestra las alternativas disponibles. No esperes a que el cliente pregunte.
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
 - Si el cliente dice cuántas llantas de cada posición necesita (ej: "2 steer y 8 traction") → muestra primero los resultados de una posición y luego di que buscarás la otra. No preguntes confirmaciones innecesarias.
@@ -931,17 +950,14 @@ async function handleMessage(userId, incomingText, platform) {
   if (session.modalidad) console.log(`[MODALIDAD] ${session.modalidad} | "${text.substring(0,50)}"`);
 
   // ── Detect tire search params ─────────────────────────────────────────────
-  const sizeMatch = text.match(/(\d{2,3}[\/]\d{2,3}[\/rR]\d{2}[\w.]*|\d{2,3}[\/\\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*|\d{2}[rR]\d{2}\.?\d*)/i);
-  if (sizeMatch) {
-    const newSize = sizeMatch[0].replace(/(\d{2,3}\/\d{2,3})\/(?!R)(\d{2})/i, '$1R$2');
+  const newSize = extractTireSize(text);
+  const sizeMatch = newSize ? [newSize] : null;
+  if (newSize) {
     if (session.current.size && newSize !== session.current.size) {
       session.current.origin = null;
     }
     session.current.size = newSize;
     session.current.step = 'searching';
-  }
-  if (!session.name && text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)) {
-    session.current.size = text.match(/(\d{2,3}[\/\]?\d{2,3}[zZrR]+\d{2}[\w.]*|11[rR]\d{2}\.?\d*)/i)[0];
   }
 
   // Detect requested quantities. Bare numbers are intentionally ignored here:
@@ -1019,6 +1035,7 @@ async function handleMessage(userId, incomingText, platform) {
 
   // ── Fetch inventory ───────────────────────────────────────────────────────
   let inventoryContext = '';
+  let deterministicReply = '';
   const hasNewSearchTrigger = sizeMatch || pos || /all.?position|todas.?posicion/i.test(text) ||
     Object.keys(session.requestedQtyByPosition||{}).some(k =>
       POSITION_KEYWORDS[k]?.some(kw => text.toLowerCase().includes(kw))
@@ -1120,7 +1137,10 @@ async function handleMessage(userId, incomingText, platform) {
             session.awaitingQuantity = true;
           }
         } else {
+          session.current.tires = [];
+          session.awaitingQuantity = false;
           inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. No hay stock de esa medida/posición.]`;
+          deterministicReply = noStockReply(session.current.size, text);
         }
 
         // Always mark this position as shown and process remaining pending positions
@@ -1152,12 +1172,23 @@ async function handleMessage(userId, incomingText, platform) {
         session.current.brandOnlyForCurrent = false;
 
       } else {
+        session.current.tires = [];
+        session.awaitingQuantity = false;
         inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. No hay stock de esa medida/posición.]`;
+        deterministicReply = noStockReply(session.current.size, text);
       }
     } catch (err) {
       console.error('Inventory fetch error:', err.message);
       inventoryContext = `\n\n[INVENTORY DATA: Error al obtener inventario. Invita a continuar por este mismo chat.]`;
     }
+  }
+
+  if (deterministicReply) {
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: deterministicReply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    console.log(`[NO STOCK] size=${session.current.size} text="${text.substring(0,80)}"`);
+    return deterministicReply;
   }
 
   // ── Tire selection — runs unconditionally before quote generation ──────────
