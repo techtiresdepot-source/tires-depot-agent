@@ -401,6 +401,10 @@ function formatInventoryOption(tire, index, isTruck) {
   return `${index+1}. *${label}* — $${tire.price}/llanta | ${tire.stock} en stock${isTruck ? ` | Pos: ${tire.position||'N/A'} | Monte: $${getMountCost(tire.size)}/c` : ''}`;
 }
 
+function inventorySelectionQuestion(text='') {
+  return isEnglishMessage(text) ? 'Which one do you prefer?' : '¿Cuál prefieres?';
+}
+
 function getRimSize(size) {
   const m = (size||'').match(/(?:[Rr\/\-])(\d+\.?\d*)$/);
   return m ? parseFloat(m[1]) : 0;
@@ -1153,6 +1157,7 @@ async function handleMessage(userId, incomingText, platform) {
   // ── Fetch inventory ───────────────────────────────────────────────────────
   let inventoryContext = '';
   let deterministicReply = '';
+  const inventoryReplyParts = [];
   const hasNewSearchTrigger = sizeMatch || pos || /all.?position|todas.?posicion/i.test(text) ||
     Object.keys(session.requestedQtyByPosition||{}).some(k =>
       POSITION_KEYWORDS[k]?.some(kw => text.toLowerCase().includes(kw))
@@ -1187,6 +1192,7 @@ async function handleMessage(userId, incomingText, platform) {
         const brandLabel  = session.current.brand  ? ` | Marca: ${session.current.brand}` : '';
         const originLabel = session.current.origin ? ` | Origen: ${session.current.origin}` : ' | Sin filtro de origen (mostrar todas las marcas disponibles)';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.current.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
+        inventoryReplyParts.push(list);
         const qtyKey = session.current.position || DEFAULT_POSITION_KEY;
         if (!session.requestedQtyByPosition[qtyKey] && !session.requestedQtyByPosition[DEFAULT_POSITION_KEY]) {
           session.awaitingQuantity = true;
@@ -1213,6 +1219,7 @@ async function handleMessage(userId, incomingText, platform) {
             const isTruckNext = getRimSize(session.current.size) >= 22.5;
             const nextList = nextTires.map((t,i) => formatInventoryOption(t, i, isTruckNext)).join('\n');
             inventoryContext += `\n\n[INVENTORY DATA POSICIÓN ${nextPos.toUpperCase()}: ${nextTires.length} llanta(s):\n${nextList}]`;
+            inventoryReplyParts.push(nextList);
             session.current.tires = nextTires;
           }
           if (session.current.position) {
@@ -1230,6 +1237,7 @@ async function handleMessage(userId, incomingText, platform) {
         }
 
         // Lead logged only when order is confirmed with full customer data
+        deterministicReply = `${inventoryReplyParts.join('\n\n')}\n\n${inventorySelectionQuestion(text)}`;
 
       } else if (brandForSearch) {
         // No results with brand — retry without brand to show alternatives
@@ -1243,6 +1251,7 @@ async function handleMessage(userId, incomingText, platform) {
             ? `No hay ${brandForSearch} en ese modelo exacto, pero SÍ hay OTRO MODELO de ${brandForSearch} en la lista — DESTÁCALO PRIMERO. Otras marcas también disponibles.`
             : `No hay ${brandForSearch} disponible en esa medida/posición. Muestra alternativas.`;
           inventoryContext = `\n\n[INVENTORY DATA: ${altNote} Opciones en ${session.current.size}${session.current.position?' pos:'+session.current.position:''} (${tiresNoBrand.length}):\n${list}]`;
+          inventoryReplyParts.push(list);
           const qtyKey = session.current.position || DEFAULT_POSITION_KEY;
           if (!session.requestedQtyByPosition[qtyKey] && !session.requestedQtyByPosition[DEFAULT_POSITION_KEY]) {
             session.awaitingQuantity = true;
@@ -1269,6 +1278,7 @@ async function handleMessage(userId, incomingText, platform) {
             const isTruckNext = getRimSize(session.current.size) >= 22.5;
             const nextList = nextTires.map((t,i) => formatInventoryOption(t, i, isTruckNext)).join('\n');
             inventoryContext += `\n\n[INVENTORY DATA POSICIÓN ${nextPos.toUpperCase()}: ${nextTires.length} llanta(s):\n${nextList}]`;
+            inventoryReplyParts.push(nextList);
             session.current.tires = nextTires;
           }
           if (session.current.position) session.current.shownPositions.push(session.current.position);
@@ -1279,6 +1289,9 @@ async function handleMessage(userId, incomingText, platform) {
         session.current.origin   = null;
         session.current.brand    = null;
         session.current.brandOnlyForCurrent = false;
+        if (inventoryReplyParts.length > 0) {
+          deterministicReply = `${inventoryReplyParts.join('\n\n')}\n\n${inventorySelectionQuestion(text)}`;
+        }
 
       } else {
         session.current.tires = [];
