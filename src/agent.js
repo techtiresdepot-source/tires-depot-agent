@@ -542,6 +542,26 @@ function getSelectionPositionKey(session) {
   return shownPos[shownPos.length - 1] || DEFAULT_POSITION_KEY;
 }
 
+function wantsFinancing(text) {
+  return /financiaci[oó]n|financiar|finance|financing|application|aplicaci[oó]n|aplicar|credito|cr[eé]dito/i.test(text);
+}
+
+function wantsFinancingHandoff(text, session) {
+  if (session.awaitingFinanceNeedAnswer && /\b(si|sí|yes|claro|dale|ok|necesito|quiero|aplicar|aplicaci[oó]n|application)\b/i.test(text)) {
+    return true;
+  }
+  return /(?:necesito|quiero|me interesa|voy a|para)\s+(?:financiaci[oó]n|financiar|finance|financing)|aplicar|aplicaci[oó]n|application|solicitud|tramitar/i.test(text);
+}
+
+function financingInfoReply() {
+  const lines = FINANCE_OPTIONS.map(f => `• *${f.name}*: ${f.note}`).join('\n');
+  return `Tenemos estas 4 opciones de financiación:\n\n${lines}\n\n¿Necesitas financiación?`;
+}
+
+function financingAdvisorReply() {
+  return 'Perfecto, te transfiero con un asesor para que pueda enviarte por mensaje de texto la aplicación de financiamiento. Un momento por favor.';
+}
+
 // ── Search session helpers ───────────────────────────────────────────────────
 function getLastSearch(session) {
   if (!session.searches) return null;
@@ -613,7 +633,8 @@ REGLAS DE PRECIOS:
 
 FINANCIACIÓN:
 ${FINANCE_OPTIONS.map(f => `- ${f.name}: ${f.note}`).join('\n')}
-- Si el cliente quiere aplicar / hacer una application → NO proceses la solicitud tú. Di: "Para tramitar tu aplicación, un asesor te contactará por mensaje de texto al número que tienes registrado para que puedas llenar la solicitud con la financiera. ¿Confirmamos?" Si confirma → responde: "Listo, un asesor se pondrá en contacto contigo pronto." y detente. No pidas más datos.
+- Si el cliente pregunta por financiación → da información breve de las cuatro empresas y pregunta si necesita financiación.
+- Si el cliente dice que necesita financiación, quiere aplicar o pide application → NO preguntes con qué compañía quiere hacer el trámite. El sistema transferirá a un asesor para que le envíe por mensaje de texto la aplicación.
 
 FLUJO DE CONVERSACIÓN — sigue este orden estricto:
 
@@ -726,6 +747,28 @@ async function handleMessage(userId, incomingText, platform) {
 
   // WhatsApp: phone is the userId directly
   if (isWA && !session.phone) session.phone = userId;
+
+  // Financing flow is deterministic: info first, advisor handoff only if needed.
+  if (wantsFinancingHandoff(text, session)) {
+    session.awaitingFinanceNeedAnswer = false;
+    session.financeTransferRequested = true;
+    const reply = financingAdvisorReply();
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    console.log(`[FINANCE HANDOFF] phone=${session.phone || userId} text="${text.substring(0,80)}"`);
+    return reply;
+  }
+
+  if (wantsFinancing(text)) {
+    session.awaitingFinanceNeedAnswer = true;
+    const reply = financingInfoReply();
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    console.log(`[FINANCE INFO] phone=${session.phone || userId} text="${text.substring(0,80)}"`);
+    return reply;
+  }
 
   // Auto-reset if history is too old or client starts fresh
   const looksLikeNewInquiry = /\d{2,3}[\d\/R.]+|cuánto|precio|necesito|busco|tienen/i.test(text);
