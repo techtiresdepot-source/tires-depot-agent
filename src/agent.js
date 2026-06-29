@@ -621,6 +621,15 @@ function outOfDeliveryZoneReply(text='') {
   return 'Solo hacemos delivery en el área de Miami, y los jueves vamos hasta West Palm Beach.';
 }
 
+function askSizeForPositionReply(position, text='') {
+  if (isEnglishMessage(text)) return `What size do you need for ${position}?`;
+  const label = position === 'steer' ? 'delantera'
+    : position === 'traction' ? 'tracción'
+    : position === 'trailer' ? 'trailer'
+    : 'esa posición';
+  return `¿Qué medida necesitas para ${label}?`;
+}
+
 // ── Search session helpers ───────────────────────────────────────────────────
 function getLastSearch(session) {
   if (!session.searches) return null;
@@ -707,14 +716,17 @@ TRANSFERENCIA A ASESOR:
 FLUJO DE CONVERSACIÓN — sigue este orden estricto:
 
 PASO 1 — SALUDO (SIEMPRE PRIMERO):
-- El PRIMER mensaje SIEMPRE debe aclarar que eres un bot/asistente virtual de Tires Depot, dar una bienvenida breve y preguntar directamente qué medida de llanta necesita. Si el cliente escribe en español: "¡Hola! Soy el asistente virtual de Tires Depot. ¿Qué medida de llanta necesitas?" Si escribe en inglés: "Hi! I'm the Tires Depot virtual assistant. What tire size do you need?" NO pidas el nombre — se obtiene automáticamente del contacto de WhatsApp.
+- El PRIMER mensaje SIEMPRE debe aclarar que eres un bot/asistente virtual de Tires Depot, dar una bienvenida breve y abrir con una pregunta general. No pidas medida ni posición en el saludo. Si el cliente escribe en español: "¡Hola! Soy el asistente virtual de Tires Depot. ¿Cómo puedo ayudarte?" Si escribe en inglés: "Hi! I'm the Tires Depot virtual assistant. How can I help you?" NO pidas el nombre — se obtiene automáticamente del contacto de WhatsApp.
 
 PASO 2 — TELÉFONO (solo si [NEEDS_PHONE]):
 - Si ves [NEEDS_PHONE] en el contexto → pide el número de teléfono antes de continuar
 
 PASO 3 — BÚSQUEDA DE LLANTAS:
-- Si no tienes tamaño → pregúntalo
-- Si tienes tamaño pero no posición → pregunta posición SOLO si es llanta de camión (rin 22.5 o mayor). Las opciones son: Steer (delantera), Traction (tracción/drive), Trailer, All Position. Para autos NO preguntes posición.
+- No preguntes por medida ni posición de entrada. Primero deja que el cliente explique qué necesita.
+- Si el cliente da SOLO la medida → busca SOLO con la medida, sin preguntar posición antes. Muestra todas las opciones disponibles para esa medida.
+- Si el cliente da medida + posición → busca con ambas.
+- Si el cliente da SOLO la posición (delantera, steer, trasera, traction, trailer, etc.) y no hay medida → pregunta la medida.
+- Si el cliente ya pidió buscar/cotizar llantas pero todavía no dio medida ni posición → pregunta de forma natural qué está buscando. No suenes insistente.
 - Cuando el cliente diga 'para atrás' o 'traseras' sin especificar más → pregunta si es Traction o Trailer (son posiciones diferentes).
 - Si el cliente pide varias posiciones en un mensaje → muestra primero los resultados de la primera posición, luego busca la siguiente automáticamente.
 - Con tamaño + posición → muestra TODOS los resultados de [INVENTORY DATA] en lista numerada
@@ -766,6 +778,7 @@ Después pregunta cuántas llantas necesita y cómo prefiere recibirlas. Hay 3 o
 ESTILO:
 - Responde en el mismo idioma del cliente. Español por defecto. Inglés solo si el mensaje completo del cliente está claramente en inglés. Si el cliente escribe en español pero menciona un nombre propio en inglés como "American First Finance", responde en español. No mezcles idiomas salvo nombres técnicos como Steer, Traction, Trailer, Pickup, Delivery o nombres de financieras.
 - ULTRA CORTO. Frases sueltas. Máximo 2 líneas. Sin cortesías, sin introducciones, sin despedidas.
+- Tono consultivo, no pushy. No conviertas cada mensaje en "¿qué medida?" o "¿qué posición?". Haz esas preguntas solo cuando sean necesarias para ayudar.
 - UNA SOLA PREGUNTA POR MENSAJE. Nunca combines dos preguntas en el mismo mensaje. Primero resuelve la selección de llanta, LUEGO (en el siguiente mensaje) pregunta la modalidad de entrega.
 - Si tienes [INVENTORY DATA] → lista TODOS los productos numerados inmediatamente, sin preámbulo ni frases como 'tengo disponibles' o 'aquí están'. NUNCA digas 'voy a buscar' o 'espera que busco' si ya tienes [INVENTORY DATA] — la búsqueda YA se realizó. Muestra la lista directamente.
 - Nunca copies literalmente "[INVENTORY DATA]" ni ningún tag interno en la respuesta al cliente.
@@ -997,11 +1010,16 @@ async function handleMessage(userId, incomingText, platform) {
   // ── Detect tire search params ─────────────────────────────────────────────
   const newSize = extractTireSize(text);
   const sizeMatch = newSize ? [newSize] : null;
+  const explicitPos = normalizePosition(text);
   if (newSize) {
     if (session.current.size && newSize !== session.current.size) {
       session.current.origin = null;
     }
     session.current.size = newSize;
+    if (!explicitPos) {
+      session.current.position = null;
+      session.current.pendingPositions = [];
+    }
     session.current.step = 'searching';
   }
 
@@ -1030,7 +1048,7 @@ async function handleMessage(userId, incomingText, platform) {
     }
   }
 
-  const pos = normalizePosition(text);
+  const pos = explicitPos;
   if (pos) {
     session.current.position = pos;
     const allPositions = [];
@@ -1043,6 +1061,14 @@ async function handleMessage(userId, incomingText, platform) {
     }
   }
   if (/all.?position|todas.?posicion/i.test(text)) session.current.position = 'trailer';
+
+  if (pos && !newSize && !session.current.size) {
+    const reply = askSizeForPositionReply(pos, text);
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
+  }
 
   const brandHit = KNOWN_BRANDS.find(b => text.toLowerCase().includes(b.toLowerCase()));
   if (brandHit) {
