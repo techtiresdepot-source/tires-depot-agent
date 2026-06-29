@@ -19,6 +19,7 @@ const BIZ = {
   mountDiscount: 5,
   balancing: 35,       // optional — only for steer/front tires
   freeDeliveryZone: 'área de Miami',
+  weeklyDeliveryZone: 'West Palm Beach los jueves',
   phone: '+1 (786) 518-5105',  // internal only — do not share in chat
   contactChannel: 'WhatsApp chat',
   address: '12301 NW 116th Ave, Suite 106, Medley FL 33178',  // warehouse/office
@@ -601,6 +602,22 @@ function advisorHandoffReply(text='') {
   return 'Perfecto. Un asesor te atenderá a la mayor brevedad posible.';
 }
 
+function asksOutOfDeliveryZone(text) {
+  return /\b(houston|texas|tx|orlando|tampa|jacksonville|georgia|atlanta|new york|ny|california|los angeles)\b/i.test(text)
+    && /\b(delivery|deliver|env[ií]o|entrega|llevar|mandar)\b/i.test(text);
+}
+
+function wantsAdvisor(text) {
+  return /asesor|representante|persona|humano|agente|vendedor|manager|supervisor|advisor|representative|human|salesperson|agent/i.test(text);
+}
+
+function outOfDeliveryZoneReply(text='') {
+  if (isEnglishMessage(text)) {
+    return 'We only offer delivery in the Miami area, and on Thursdays we go up to West Palm Beach.';
+  }
+  return 'Solo hacemos delivery en el área de Miami, y los jueves vamos hasta West Palm Beach.';
+}
+
 // ── Search session helpers ───────────────────────────────────────────────────
 function getLastSearch(session) {
   if (!session.searches) return null;
@@ -666,6 +683,7 @@ REGLAS DE PRECIOS:
 - Balanceo: ${BIZ.balancing}/llanta — OPCIONAL, solo para llantas Steer (delanteras), solo cuando monta con nosotros.
 - Descuento: -${BIZ.mountDiscount}/llanta al montar con nosotros — se descuenta del precio de la llanta, por lo que también reduce la base del tax
 - Free delivery en el área de Miami. Otros condados tienen costo adicional.
+- Cobertura de delivery: solo área de Miami. Los jueves vamos hasta West Palm Beach. Fuera de esa cobertura NO ofrezcas delivery, NO ofrezcas "otra opción" y NO preguntes nada más. Si el cliente pide asesor, transfiere a asesor.
 - Pago en efectivo (cash): precio normal, sin descuento
 - Pago con tarjeta de crédito: recargo del 3% sobre el total
 - NO hay descuentos por pagar en efectivo
@@ -703,7 +721,7 @@ PASO 3 — BÚSQUEDA DE LLANTAS:
   3. *Pickup* → sin monte, sin descuento, el cliente recoge en tienda
 - NUNCA incluyas monte en la cotización si el cliente no confirmó explícitamente que va a montar.
 - Si el cliente dice 'llevarme las gomas', 'paso a buscarlas', 'recoger', 'pickup', 'solo quiero las gomas' → es Pickup.
-- Cuando menciones delivery en preguntas o respuestas, SIEMPRE especifica: 'delivery gratis en el área de Miami'.
+- Cuando menciones delivery en preguntas o respuestas, SIEMPRE especifica: 'delivery gratis en el área de Miami'. Los jueves también vamos hasta West Palm Beach. Fuera de Miami/West Palm Beach jueves, no ofrezcas nada ni preguntes otra opción.
 - SIEMPRE incluye todas las selecciones previas en la cotización final, no solo la última.
 
 MANEJO DE PREGUNTAS FUERA DEL FLUJO (crítico):
@@ -797,6 +815,25 @@ async function handleMessage(userId, incomingText, platform) {
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
+  }
+
+  if (wantsAdvisor(text)) {
+    session.conversationEnded = true;
+    const reply = advisorHandoffReply(text);
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    console.log(`[ADVISOR HANDOFF] phone=${session.phone || userId} text="${text.substring(0,80)}"`);
+    return reply;
+  }
+
+  if (asksOutOfDeliveryZone(text)) {
+    const reply = outOfDeliveryZoneReply(text);
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    console.log(`[OUT OF DELIVERY ZONE] phone=${session.phone || userId} text="${text.substring(0,80)}"`);
     return reply;
   }
 
