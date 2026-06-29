@@ -646,8 +646,16 @@ function isGenericInfoRequest(text) {
 }
 
 function initialGreetingReply(text='') {
-  if (isEnglishMessage(text)) return "Hi! I'm the Tires Depot virtual assistant. What tire size do you need?";
-  return '¡Hola! Soy el asistente virtual de Tires Depot. ¿Qué medida de llanta necesitas?';
+  if (isEnglishMessage(text)) return "Hi! I'm the Tires Depot virtual assistant. How can I help you?";
+  return '¡Hola! Soy el asistente virtual de Tires Depot. ¿Cómo puedo ayudarte?';
+}
+
+function withInitialAssistantIntro(reply, text='', isFirstInteraction=false) {
+  if (!isFirstInteraction || /asistente virtual|virtual assistant/i.test(reply)) return reply;
+  const intro = isEnglishMessage(text)
+    ? "Hi! I'm the Tires Depot virtual assistant."
+    : '¡Hola! Soy el asistente virtual de Tires Depot.';
+  return `${intro}\n\n${reply}`;
 }
 
 // ── Search session helpers ───────────────────────────────────────────────────
@@ -736,7 +744,9 @@ TRANSFERENCIA A ASESOR:
 FLUJO DE CONVERSACIÓN — sigue este orden estricto:
 
 PASO 1 — SALUDO (SIEMPRE PRIMERO):
-- El PRIMER mensaje SIEMPRE debe aclarar que eres un bot/asistente virtual de Tires Depot, dar una bienvenida breve y preguntar la medida. Si el cliente escribe en español: "¡Hola! Soy el asistente virtual de Tires Depot. ¿Qué medida de llanta necesitas?" Si escribe en inglés: "Hi! I'm the Tires Depot virtual assistant. What tire size do you need?" NO pidas el nombre — se obtiene automáticamente del contacto de WhatsApp.
+- Si el cliente solo saluda, el PRIMER mensaje debe aclarar que eres un bot/asistente virtual de Tires Depot, dar una bienvenida breve y preguntar de forma general cómo puedes ayudar. Si el cliente escribe en español: "¡Hola! Soy el asistente virtual de Tires Depot. ¿Cómo puedo ayudarte?" Si escribe en inglés: "Hi! I'm the Tires Depot virtual assistant. How can I help you?" NO pidas el nombre — se obtiene automáticamente del contacto de WhatsApp.
+- Si el primer mensaje ya trae intención concreta de llantas pero falta la medida, saluda como asistente virtual y pregunta la medida necesaria.
+- Si el primer mensaje trae saludo + medida, saludo + posición, o saludo + medida + posición, ignora el saludo para clasificar la intención y procesa el resto con las mismas reglas: solo medida → busca medida; medida + posición → busca ambas; solo posición → pregunta medida.
 - Si la sesión se reinició o no tienes historial interno, NO asumas contexto de mensajes anteriores visibles en WhatsApp. Trata el mensaje como conversación nueva y saluda como asistente virtual. Si el mensaje incluye posición/cantidad pero no medida, pregunta la medida para esa posición.
 
 PASO 2 — TELÉFONO (solo si [NEEDS_PHONE]):
@@ -830,6 +840,7 @@ async function handleMessage(userId, incomingText, platform) {
   const session  = getSession(userId);
   const text     = incomingText.trim();
   const isWA     = platform === 'whatsapp';
+  const isFirstInteraction = session.history.length === 0;
 
   // Migrate old session structure if needed
   if (!session.current) {
@@ -852,7 +863,7 @@ async function handleMessage(userId, incomingText, platform) {
   // WhatsApp: phone is the userId directly
   if (isWA && !session.phone) session.phone = userId;
 
-  if (session.history.length === 0 && (isSimpleGreeting(text) || isGenericInfoRequest(text))) {
+  if (isFirstInteraction && (isSimpleGreeting(text) || isGenericInfoRequest(text))) {
     const reply = initialGreetingReply(text);
     session.step = 'searching';
     session.history.push({ role: 'user', content: text });
@@ -1092,7 +1103,7 @@ async function handleMessage(userId, incomingText, platform) {
   if (/all.?position|todas.?posicion/i.test(text)) session.current.position = 'trailer';
 
   if (pos && !newSize && !session.current.size) {
-    const reply = askSizeForPositionReply(pos, text);
+    const reply = withInitialAssistantIntro(askSizeForPositionReply(pos, text), text, isFirstInteraction);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -1284,6 +1295,7 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   if (deterministicReply) {
+    deterministicReply = withInitialAssistantIntro(deterministicReply, text, isFirstInteraction);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: deterministicReply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -1425,7 +1437,7 @@ async function handleMessage(userId, incomingText, platform) {
     messages:   session.history,
   });
 
-  const reply = response.content[0].text;
+  const reply = withInitialAssistantIntro(response.content[0].text, text, isFirstInteraction);
   session.history.push({ role:'assistant', content: reply });
   // Extract total, order lines and modalidad from Claude's reply
   const replyTotalMatch = reply.match(/TOTAL[^$]*\$([\d,]+\.\d{2})/i);
