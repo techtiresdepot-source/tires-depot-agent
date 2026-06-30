@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-06-29-size-parser-inventory-direct-v3';
+const BOT_VERSION = '2026-06-29-flexible-size-parser-v6';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -331,11 +331,47 @@ function normalizeSize(s) {
   return v.replace(/[^A-Z0-9]/g,'');
 }
 
-function extractTireSize(text) {
-  const spaced = text.match(/\b(\d{2,3})\s+(\d{2,3})\s+(\d{2})\s*[\/.]\s*(\d)\b/i);
-  if (spaced) return `${spaced[1]}/${spaced[2]}R${spaced[3]}.${spaced[4]}`.toUpperCase();
+function normalizeRim(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (digits.length === 3) return `${digits.slice(0, 2)}.${digits[2]}`;
+  if (digits.length === 2) return digits;
+  return null;
+}
 
-  const explicit = text.match(/\b(\d{2,3}\s*\/\s*\d{2,3}\s*R\s*\d{2}(?:\.\d)?|\d{2,3}\s*\/\s*\d{2,3}\s*\/\s*R\s*\d{2}(?:\.\d)?|\d{2,3}\s*\/\s*\d{2,3}\s*\/\s*\d{2}(?:\.\d)?|11\s*R\s*\d{2}(?:\.\d)?|\d{2}\s*R\s*\d{2}(?:\.\d)?)\b/i);
+function buildMetricSize(width, profile, rimRaw) {
+  const rim = normalizeRim(rimRaw);
+  if (!rim) return null;
+  return `${width}/${profile}R${rim}`.toUpperCase();
+}
+
+function extractTireSize(text) {
+  const t = String(text || '');
+
+  const compact11r = t.match(/\b11\s*[-\/]?\s*(?:R\s*)?22\s*[.]?\s*5\b/i);
+  if (compact11r) return '11R22.5';
+
+  const compactCommercial = t.match(/\b(1[0-3])\s*[-\/]?\s*(?:R\s*)?(2[0-9])\s*[.]?\s*([05])\b/i);
+  if (compactCommercial) return `${compactCommercial[1]}R${compactCommercial[2]}.${compactCommercial[3]}`.toUpperCase();
+
+  const separatedMetric = t.match(/\b(\d{3})\s*[\/\-\s]\s*(\d{2})\s*(?:R|\/|\-|\s)\s*(\d{2}(?:\s*[.]?\s*\d)?)\b/i);
+  if (separatedMetric) {
+    const built = buildMetricSize(separatedMetric[1], separatedMetric[2], separatedMetric[3]);
+    if (built) return built;
+  }
+
+  const compactMetricWithR = t.match(/\b(\d{3})(\d{2})\s*R\s*(\d{2,3})\b/i);
+  if (compactMetricWithR) {
+    const built = buildMetricSize(compactMetricWithR[1], compactMetricWithR[2], compactMetricWithR[3]);
+    if (built) return built;
+  }
+
+  const compactMetric = t.match(/\b(\d{3})(\d{2})(\d{2,3})\b/);
+  if (compactMetric) {
+    const built = buildMetricSize(compactMetric[1], compactMetric[2], compactMetric[3]);
+    if (built) return built;
+  }
+
+  const explicit = t.match(/\b(\d{2,3}\s*\/\s*\d{2,3}\s*R\s*\d{2}(?:\.\d)?|\d{2,3}\s*\/\s*\d{2,3}\s*\/\s*R\s*\d{2}(?:\.\d)?|\d{2,3}\s*\/\s*\d{2,3}\s*\/\s*\d{2}(?:\.\d)?|11\s*R\s*\d{2}(?:\.\d)?|\d{2}\s*R\s*\d{2}(?:\.\d)?)\b/i);
   if (!explicit) return null;
   return explicit[1]
     .replace(/\s+/g, '')
@@ -402,7 +438,7 @@ function filterTires(size, position, brand, origin) {
 
 function formatInventoryOption(tire, index, isTruck) {
   const label = tire.name || `${tire.brand || 'Llanta'} ${tire.size || ''}`.trim();
-  return `${index+1}. *${label}* — $${tire.price}/llanta | ${tire.stock} en stock${isTruck ? ` | Pos: ${tire.position||'N/A'} | Monte: $${getMountCost(tire.size)}/c` : ''}`;
+  return `${index+1}. *${label}* — $${tire.price}/llanta | ${tire.stock} en stock${isTruck ? ` | Pos: ${tire.position||'N/A'}` : ''}`;
 }
 
 function inventorySelectionQuestion(text='') {
@@ -813,7 +849,8 @@ PASO 5 — OFERTA DE EMAIL (solo si [OFFER_EMAIL]):
 - Después de mostrar cotización o resultados, si ves [OFFER_EMAIL] → invita al cliente a registrar su email para recibir la *Llanta de la Semana* con precios especiales. Hazlo de forma breve y no invasiva. Si dice que no → acepta y continúa normalmente.
 
 FORMATO LISTA:
-N. *Marca* — $precio/llanta | stock unidades | Posición | Monte $X/llanta
+N. *Producto exacto* — $precio/llanta | stock unidades | Posición
+No incluyas precio de monte en las opciones de llantas. El precio de monte se muestra solo después si el cliente elige montar con nosotros.
 Después pregunta cuántas llantas necesita y cómo prefiere recibirlas. Hay 3 opciones EXCLUYENTES:
 1. Monta con nosotros → descuento -$5/llanta, pregunta válvulas y disposición de llantas viejas
 2. Delivery gratis → área de Miami, sin descuento, sin preguntar disposición
