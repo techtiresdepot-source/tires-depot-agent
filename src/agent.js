@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-06-29-inventory-direct-v2';
+const BOT_VERSION = '2026-06-29-size-parser-inventory-direct-v3';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -335,9 +335,11 @@ function extractTireSize(text) {
   const spaced = text.match(/\b(\d{2,3})\s+(\d{2,3})\s+(\d{2})\s*[\/.]\s*(\d)\b/i);
   if (spaced) return `${spaced[1]}/${spaced[2]}R${spaced[3]}.${spaced[4]}`.toUpperCase();
 
-  const explicit = text.match(/\b(\d{2,3}\/\d{2,3}R\d{2}(?:\.\d)?|\d{2,3}\/\d{2,3}\/R\d{2}(?:\.\d)?|\d{2,3}\/\d{2,3}\/\d{2}(?:\.\d)?|11R\d{2}(?:\.\d)?|\d{2}R\d{2}(?:\.\d)?)\b/i);
+  const explicit = text.match(/\b(\d{2,3}\s*\/\s*\d{2,3}\s*R\s*\d{2}(?:\.\d)?|\d{2,3}\s*\/\s*\d{2,3}\s*\/\s*R\s*\d{2}(?:\.\d)?|\d{2,3}\s*\/\s*\d{2,3}\s*\/\s*\d{2}(?:\.\d)?|11\s*R\s*\d{2}(?:\.\d)?|\d{2}\s*R\s*\d{2}(?:\.\d)?)\b/i);
   if (!explicit) return null;
   return explicit[1]
+    .replace(/\s+/g, '')
+    .replace(/\s*\/\s*/g, '/')
     .replace(/(\d{2,3}\/\d{2,3})\/R/i, '$1R')
     .replace(/(\d{2,3}\/\d{2,3})\/(\d{2}(?:\.\d)?)/i, '$1R$2')
     .toUpperCase();
@@ -1068,10 +1070,11 @@ async function handleMessage(userId, incomingText, platform) {
       session.current.origin = null;
     }
     session.current.size = newSize;
-    if (!explicitPos) {
+    if (!explicitPos && !session.awaitingSizeForPosition) {
       session.current.position = null;
       session.current.pendingPositions = [];
     }
+    session.awaitingSizeForPosition = false;
     session.current.step = 'searching';
   }
 
@@ -1116,6 +1119,7 @@ async function handleMessage(userId, incomingText, platform) {
 
   if (pos && !newSize && !session.current.size) {
     const reply = withInitialAssistantIntro(askSizeForPositionReply(pos, text), text, isFirstInteraction);
+    session.awaitingSizeForPosition = true;
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
