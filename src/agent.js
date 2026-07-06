@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-06-29-flexible-size-parser-v6';
+const BOT_VERSION = '2026-06-29-exact-inventory-v8';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -381,6 +381,21 @@ function extractTireSize(text) {
     .toUpperCase();
 }
 
+function isRimOnlySize(text) {
+  const t = String(text || '').trim();
+  if (extractTireSize(t)) return false;
+  return /\b(?:rin|rim|r)?\s*(?:22\s*[.]?\s*5|24\s*[.]?\s*5|22|24)\b/i.test(t)
+    && !/\b\d{3}\s*[\/\-\s]?\s*\d{2}\b/i.test(t)
+    && !/\b1[0-3]\s*R?\s*2[0-9]/i.test(t);
+}
+
+function askPreciseSizeForRimReply(text='') {
+  if (isEnglishMessage(text)) {
+    return 'Is it regular 11R22.5 or low profile, like 295/75R22.5 or 275/80R22.5?';
+  }
+  return '¿Es regular 11R22.5 o low profile, como 295/75R22.5 o 275/80R22.5?';
+}
+
 function noStockReply(size, text='') {
   if (isEnglishMessage(text)) return `Sorry, we don't have tires in size ${size} in stock right now.`;
   return `Lo siento, no tenemos llantas de la medida ${size} en stock en este momento.`;
@@ -443,6 +458,20 @@ function formatInventoryOption(tire, index, isTruck) {
 
 function inventorySelectionQuestion(text='') {
   return isEnglishMessage(text) ? 'Which one do you prefer?' : '¿Cuál prefieres?';
+}
+
+function buildExactInventoryReplyFromSearches(session, text='') {
+  const searches = (session.searches || []).filter(s => s && Array.isArray(s.tires) && s.tires.length > 0);
+  if (searches.length === 0) return '';
+  const blocks = searches.map(s => {
+    const isTruck = getRimSize(s.size) >= 22.5;
+    return s.tires.map((t, i) => formatInventoryOption(t, i, isTruck)).join('\n');
+  });
+  return `${blocks.join('\n\n')}\n\n${inventorySelectionQuestion(text)}`;
+}
+
+function asksToRepeatInventoryOptions(text='') {
+  return /opciones|lista|repite|cu[aá]les eran|cu[aá]l prefieres|available|options|which one|show.*again|send.*again/i.test(text);
 }
 
 function getRimSize(size) {
@@ -983,6 +1012,17 @@ async function handleMessage(userId, incomingText, platform) {
     return reply;
   }
 
+  if (asksToRepeatInventoryOptions(text)) {
+    const reply = buildExactInventoryReplyFromSearches(session, text);
+    if (reply) {
+      session.history.push({ role: 'user', content: text });
+      session.history.push({ role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      console.log(`[REPEAT INVENTORY EXACT ${BOT_VERSION}] phone=${session.phone || userId}`);
+      return reply;
+    }
+  }
+
   // Auto-reset if history is too old or client starts fresh
   const looksLikeNewInquiry = /\d{2,3}[\d\/R.]+|cuánto|precio|necesito|busco|tienen/i.test(text);
   if (looksLikeNewInquiry && session.history.length >= 6) {
@@ -1102,6 +1142,16 @@ async function handleMessage(userId, incomingText, platform) {
   const newSize = extractTireSize(text);
   const sizeMatch = newSize ? [newSize] : null;
   const explicitPos = normalizePosition(text);
+
+  if (!newSize && isRimOnlySize(text)) {
+    const reply = withInitialAssistantIntro(askPreciseSizeForRimReply(text), text, isFirstInteraction);
+    session.awaitingSizeForPosition = true;
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
+  }
+
   if (newSize) {
     if (session.current.size && newSize !== session.current.size) {
       session.current.origin = null;
@@ -1354,7 +1404,7 @@ async function handleMessage(userId, incomingText, platform) {
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: deterministicReply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
-    console.log(`[NO STOCK] size=${session.current.size} text="${text.substring(0,80)}"`);
+    console.log(`[DETERMINISTIC REPLY ${BOT_VERSION}] size=${session.current.size} text="${text.substring(0,80)}"`);
     return deterministicReply;
   }
 
@@ -1469,13 +1519,7 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   // ── Searches summary ──────────────────────────────────────────────────────
-  let searchesSummary = '';
-  if (session.searches && session.searches.length > 0) {
-    const summary = session.searches.map(s =>
-      `${s.size}${s.position?' '+s.position:''}: ${(s.tires||[]).map((t,i)=>`${i+1}. ${t.name || t.brand} $${t.price}${t.stock != null ? ` (${t.stock} stock)` : ''}${t.position ? ` ${t.position}` : ''}`).join('; ')}`
-    ).join(' | ');
-    searchesSummary = `\n[BÚSQUEDAS EN SESIÓN: ${summary}]`;
-  }
+  const searchesSummary = '';
 
   // ── Send assistant request ────────────────────────────────────────────────
   const userMessage = text + contactContext + needsPhone + searchesSummary + inventoryContext + quoteContext + emailOffer;
