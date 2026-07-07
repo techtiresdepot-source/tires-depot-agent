@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-06-29-exact-inventory-v8';
+const BOT_VERSION = '2026-07-06-first-message-identifies-v10';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -700,12 +700,12 @@ function outOfDeliveryZoneReply(text='') {
 }
 
 function askSizeForPositionReply(position, text='') {
-  if (isEnglishMessage(text)) return `Hi! I'm the Tires Depot virtual assistant. What size do you need for ${position}?`;
+  if (isEnglishMessage(text)) return `What size do you need for ${position}?`;
   const label = position === 'steer' ? 'delantera'
     : position === 'traction' ? 'tracción'
     : position === 'trailer' ? 'trailer'
     : 'esa posición';
-  return `¡Hola! Soy el asistente virtual de Tires Depot. ¿Qué medida necesitas para ${label}?`;
+  return `¿Qué medida necesitas para ${label}?`;
 }
 
 function isSimpleGreeting(text) {
