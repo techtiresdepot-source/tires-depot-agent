@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-07-06-first-message-identifies-v10';
+const BOT_VERSION = '2026-07-07-flex-all-size-formats-v12';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -344,24 +344,45 @@ function buildMetricSize(width, profile, rimRaw) {
   return `${width}/${profile}R${rim}`.toUpperCase();
 }
 
+function buildCommercialSize(width, rimRaw) {
+  const rim = normalizeRim(rimRaw);
+  if (!rim) return null;
+  return `${width}R${rim}`.toUpperCase();
+}
+
 function extractTireSize(text) {
   const t = String(text || '');
 
-  const compact11r = t.match(/\b11\s*[-\/]?\s*(?:R\s*)?22\s*[.]?\s*5\b/i);
-  if (compact11r) return '11R22.5';
+  const commercialWithR = t.match(/\b(1[0-3])\s*R\s*[.]?\s*(2[0-9](?:\s*[.]?\s*[05])?)\b/i);
+  if (commercialWithR) {
+    const built = buildCommercialSize(commercialWithR[1], commercialWithR[2]);
+    if (built) return built;
+  }
+
+  const commercialWithSeparator = t.match(/\b(1[0-3])\s*[-\/.]\s*(2[0-9](?:\s*[.]?\s*[05])?)\b/i);
+  if (commercialWithSeparator) {
+    const built = buildCommercialSize(commercialWithSeparator[1], commercialWithSeparator[2]);
+    if (built) return built;
+  }
 
   const compactCommercial = t.match(/\b(1[0-3])\s*[-\/]?\s*(?:R\s*)?(2[0-9])\s*[.]?\s*([05])\b/i);
   if (compactCommercial) return `${compactCommercial[1]}R${compactCommercial[2]}.${compactCommercial[3]}`.toUpperCase();
 
-  const separatedMetric = t.match(/\b(\d{3})\s*[\/\-\s]\s*(\d{2})\s*(?:R|\/|\-|\s)\s*(\d{2}(?:\s*[.]?\s*\d)?)\b/i);
+  const separatedMetric = t.match(/\b(\d{3})\s*[\/\-.\s]\s*(\d{2})\s*(?:[\/\-.\s]*R\s*[.]?\s*|[\/\-.\s]+)(\d{2}(?:\s*[.]?\s*[05])?)\b/i);
   if (separatedMetric) {
     const built = buildMetricSize(separatedMetric[1], separatedMetric[2], separatedMetric[3]);
     if (built) return built;
   }
 
-  const compactMetricWithR = t.match(/\b(\d{3})(\d{2})\s*R\s*(\d{2,3})\b/i);
+  const compactMetricWithR = t.match(/\b(\d{3})(\d{2})\s*R\s*[.]?\s*(\d{2,3})\b/i);
   if (compactMetricWithR) {
     const built = buildMetricSize(compactMetricWithR[1], compactMetricWithR[2], compactMetricWithR[3]);
+    if (built) return built;
+  }
+
+  const compactMetricPrefix = t.match(/\b(\d{3})(\d{2})\s+(?:(?:R\s*[.]?\s*)?)(\d{2,3})\b/i);
+  if (compactMetricPrefix) {
+    const built = buildMetricSize(compactMetricPrefix[1], compactMetricPrefix[2], compactMetricPrefix[3]);
     if (built) return built;
   }
 
