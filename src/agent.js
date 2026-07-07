@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-07-07-flex-all-size-formats-v12';
+const BOT_VERSION = '2026-07-07-single-option-quantity-v13';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -481,6 +481,14 @@ function inventorySelectionQuestion(text='') {
   return isEnglishMessage(text) ? 'Which one do you prefer?' : '¿Cuál prefieres?';
 }
 
+function inventoryQuantityQuestion(text='') {
+  return isEnglishMessage(text) ? 'How many tires do you need?' : '¿Cuántas llantas necesitas?';
+}
+
+function inventoryFollowupQuestion(optionCount, text='') {
+  return optionCount === 1 ? inventoryQuantityQuestion(text) : inventorySelectionQuestion(text);
+}
+
 function buildExactInventoryReplyFromSearches(session, text='') {
   const searches = (session.searches || []).filter(s => s && Array.isArray(s.tires) && s.tires.length > 0);
   if (searches.length === 0) return '';
@@ -488,7 +496,8 @@ function buildExactInventoryReplyFromSearches(session, text='') {
     const isTruck = getRimSize(s.size) >= 22.5;
     return s.tires.map((t, i) => formatInventoryOption(t, i, isTruck)).join('\n');
   });
-  return `${blocks.join('\n\n')}\n\n${inventorySelectionQuestion(text)}`;
+  const optionCount = searches.reduce((sum, s) => sum + (s.tires || []).length, 0);
+  return `${blocks.join('\n\n')}\n\n${inventoryFollowupQuestion(optionCount, text)}`;
 }
 
 function asksToRepeatInventoryOptions(text='') {
@@ -1272,6 +1281,7 @@ async function handleMessage(userId, incomingText, platform) {
   let inventoryContext = '';
   let deterministicReply = '';
   const inventoryReplyParts = [];
+  let shownOptionCount = 0;
   const hasNewSearchTrigger = sizeMatch || pos || /all.?position|todas.?posicion/i.test(text) ||
     Object.keys(session.requestedQtyByPosition||{}).some(k =>
       POSITION_KEYWORDS[k]?.some(kw => text.toLowerCase().includes(kw))
@@ -1308,6 +1318,7 @@ async function handleMessage(userId, incomingText, platform) {
         const originLabel = session.current.origin ? ` | Origen: ${session.current.origin}` : ' | Sin filtro de origen (mostrar todas las marcas disponibles)';
         inventoryContext = `\n\n[INVENTORY DATA: ${tires.length} llanta(s) para ${session.current.size}${posLabel}${brandLabel}${originLabel} ${mountNote}${cheapLabel}:\n${list}]`;
         inventoryReplyParts.push(list);
+        shownOptionCount += tires.length;
         const qtyKey = session.current.position || DEFAULT_POSITION_KEY;
         if (!session.requestedQtyByPosition[qtyKey] && !session.requestedQtyByPosition[DEFAULT_POSITION_KEY]) {
           session.awaitingQuantity = true;
@@ -1335,6 +1346,7 @@ async function handleMessage(userId, incomingText, platform) {
             const nextList = nextTires.map((t,i) => formatInventoryOption(t, i, isTruckNext)).join('\n');
             inventoryContext += `\n\n[INVENTORY DATA POSICIÓN ${nextPos.toUpperCase()}: ${nextTires.length} llanta(s):\n${nextList}]`;
             inventoryReplyParts.push(nextList);
+            shownOptionCount += nextTires.length;
             session.current.tires = nextTires;
           }
           if (session.current.position) {
@@ -1352,7 +1364,7 @@ async function handleMessage(userId, incomingText, platform) {
         }
 
         // Lead logged only when order is confirmed with full customer data
-        deterministicReply = `${inventoryReplyParts.join('\n\n')}\n\n${inventorySelectionQuestion(text)}`;
+        deterministicReply = `${inventoryReplyParts.join('\n\n')}\n\n${inventoryFollowupQuestion(shownOptionCount, text)}`;
 
       } else if (brandForSearch) {
         // No results with brand — retry without brand to show alternatives
@@ -1367,6 +1379,7 @@ async function handleMessage(userId, incomingText, platform) {
             : `No hay ${brandForSearch} disponible en esa medida/posición. Muestra alternativas.`;
           inventoryContext = `\n\n[INVENTORY DATA: ${altNote} Opciones en ${session.current.size}${session.current.position?' pos:'+session.current.position:''} (${tiresNoBrand.length}):\n${list}]`;
           inventoryReplyParts.push(list);
+          shownOptionCount += tiresNoBrand.length;
           const qtyKey = session.current.position || DEFAULT_POSITION_KEY;
           if (!session.requestedQtyByPosition[qtyKey] && !session.requestedQtyByPosition[DEFAULT_POSITION_KEY]) {
             session.awaitingQuantity = true;
@@ -1394,6 +1407,7 @@ async function handleMessage(userId, incomingText, platform) {
             const nextList = nextTires.map((t,i) => formatInventoryOption(t, i, isTruckNext)).join('\n');
             inventoryContext += `\n\n[INVENTORY DATA POSICIÓN ${nextPos.toUpperCase()}: ${nextTires.length} llanta(s):\n${nextList}]`;
             inventoryReplyParts.push(nextList);
+            shownOptionCount += nextTires.length;
             session.current.tires = nextTires;
           }
           if (session.current.position) session.current.shownPositions.push(session.current.position);
@@ -1405,7 +1419,7 @@ async function handleMessage(userId, incomingText, platform) {
         session.current.brand    = null;
         session.current.brandOnlyForCurrent = false;
         if (inventoryReplyParts.length > 0) {
-          deterministicReply = `${inventoryReplyParts.join('\n\n')}\n\n${inventorySelectionQuestion(text)}`;
+          deterministicReply = `${inventoryReplyParts.join('\n\n')}\n\n${inventoryFollowupQuestion(shownOptionCount, text)}`;
         }
 
       } else {
