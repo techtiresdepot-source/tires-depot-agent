@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-07-08-woocommerce-sale-status-v30';
+const BOT_VERSION = '2026-07-08-explicit-cart-commands-v34';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -665,6 +665,16 @@ function extractBareQuantity(text) {
   return m ? validRequestedQty(m[1]) : null;
 }
 
+function normalizeProductText(value='') {
+  return String(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\bjet\s+way\b/g, 'jetway')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 function findSelection(text, tires) {
   if (!tires || tires.length === 0) return null;
   const isJustNumber = /^\s*\d+\s*$/.test(text);
@@ -674,7 +684,19 @@ function findSelection(text, tires) {
     const idx = Number.parseInt(pickMatch[1], 10) - 1;
     if (idx >= 0 && idx < tires.length) return { tire: tires[idx], idx, kind: 'index' };
   }
-  const brandIdx = tires.findIndex(t => t.brand && text.toLowerCase().includes(t.brand.toLowerCase()));
+  const normalizedInput = normalizeProductText(text);
+  const genericTokens = new Set(['steer','traction','trailer','position','all','tire','tires','llanta','llantas','quiero','necesito']);
+  const brandIdx = tires.findIndex(t => {
+    const brand = normalizeProductText(t.brand);
+    const name = normalizeProductText(t.name);
+    return (brand && normalizedInput.includes(brand))
+      || name.split(' ').some(token =>
+        token.length >= 4
+        && !genericTokens.has(token)
+        && !/^\d+$/.test(token)
+        && normalizedInput.split(' ').includes(token)
+      );
+  });
   return brandIdx >= 0 ? { tire: tires[brandIdx], idx: brandIdx, kind: 'brand' } : null;
 }
 
@@ -850,10 +872,11 @@ function asksAboutTirePromotion(text='') {
 function promotionReply(inventory, text='', session=null) {
   const english = isEnglishMessage(text, session);
   const size = extractTireSize(text);
-  const brand = KNOWN_BRANDS.find(item => text.toLowerCase().includes(item.toLowerCase()));
+  const normalizedInput = normalizeProductText(text);
+  const brand = KNOWN_BRANDS.find(item => normalizedInput.includes(normalizeProductText(item)));
   let candidates = inventory.filter(tire =>
     (!size || normalizeSize(tire.size) === normalizeSize(size))
-    && (!brand || tire.brand?.toLowerCase() === brand.toLowerCase() || tire.name.toLowerCase().includes(brand.toLowerCase()))
+    && (!brand || normalizeProductText(tire.brand) === normalizeProductText(brand) || normalizeProductText(tire.name).includes(normalizeProductText(brand)))
   );
 
   if (!size && !brand) {
@@ -1124,6 +1147,7 @@ ESTILO:
 - Un pedido puede contener múltiples líneas con diferentes tamaños, posiciones y marcas, incluso dos productos distintos de la misma posición. Conserva cada combinación seleccionada con su propia cantidad; nunca reemplaces una línea anterior solo porque comparte posición o tamaño.
 - Después de completar una línea, pregunta si quiere agregar algo más o ver su pedido. Al mostrar el carrito, permite agregar o quitar líneas. Solo cuando el cliente confirme que el carrito está correcto pregunta por monte, delivery o pickup y genera la cotización.
 - Si el cliente descarta una posición (por ejemplo, consiguió las steer más baratas en otro lugar), márcala como descartada: no vuelvas a pedir una elección para esa posición y no la incluyas en la cotización. Continúa únicamente con las posiciones que sí comprará.
+- No adivines cambios ambiguos del carrito. Para agregar o quitar productos, el cliente debe identificar claramente la línea, marca, producto o posición. Si no está claro, pide que lo especifique.
 - Las promociones se verifican directamente con los campos vigentes de WooCommerce (on_sale, precio regular, precio de oferta y fechas). Si preguntan por una promoción anterior que ya terminó, informa que ya no está vigente y da el precio actual. Nunca conserves una promoción por memoria de la conversación.
 
 IMPORTANTE: Los tags [INVENTORY DATA:], [QUOTE:], [CUSTOMER NAME:], etc. son instrucciones internas — NUNCA los copies literalmente en tu respuesta al cliente. Usa su contenido para formular tu respuesta.
@@ -1176,13 +1200,14 @@ async function handleMessage(userId, incomingText, platform) {
   if (!session.searches) session.searches = [];
   ensureQuantityState(session);
 
-  const declinedNow = extractDeclinedPositions(text);
+  const declinedNow = [...new Set(extractDeclinedPositions(text))];
   declinedNow.forEach(position => {
     session.declinedPositions[position] = true;
     delete session.selectedTires[position];
     (session.searches || [])
       .filter(search => search.position === position)
       .forEach(search => delete session.selectedTiresBySearch[search.key]);
+    session.cartLines = session.cartLines.filter(line => line.position !== position);
     console.log(`[POSITION DECLINED] ${position}`);
   });
   const isPositionDeclineMessage = declinedNow.length > 0;
@@ -1601,15 +1626,15 @@ async function handleMessage(userId, incomingText, platform) {
   // Detect requested quantities. Bare numbers are intentionally ignored here:
   // in this flow they are option indexes unless paired with tire units/position.
   const qtyPosMatches = extractPositionQuantities(text);
-  const namedQtyMatch = text.match(/^\s*([1-9][0-9]?)\s+(.+?)\s*$/);
+  const namedQtyMatch = text.match(/^\s*(?:(?:quiero|necesito|dame|llevo|me llevo|voy a llevar)\s+)?([1-9][0-9]?)\s+(.+?)\s*$/i);
   const tiresForNamedQty = session.current.tires?.length
     ? session.current.tires
     : (getLastSearch(session)?.tires || []);
   const namedQtyTire = namedQtyMatch
     ? tiresForNamedQty.find(tire => {
-        const requestedName = namedQtyMatch[2].toLowerCase();
-        return (tire.brand && requestedName.includes(tire.brand.toLowerCase()))
-          || (tire.name && tire.name.toLowerCase().includes(requestedName));
+        const requestedName = normalizeProductText(namedQtyMatch[2]);
+        return (tire.brand && requestedName.includes(normalizeProductText(tire.brand)))
+          || (tire.name && normalizeProductText(tire.name).includes(requestedName));
       })
     : null;
   const quantityWithNamedSelection = namedQtyTire ? validRequestedQty(namedQtyMatch[1]) : null;
