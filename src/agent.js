@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-07-07-single-option-quantity-v13';
+const BOT_VERSION = '2026-07-08-spanish-default-language-v16';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -410,15 +410,15 @@ function isRimOnlySize(text) {
     && !/\b1[0-3]\s*R?\s*2[0-9]/i.test(t);
 }
 
-function askPreciseSizeForRimReply(text='') {
-  if (isEnglishMessage(text)) {
+function askPreciseSizeForRimReply(text='', session=null) {
+  if (isEnglishMessage(text, session)) {
     return 'Is it regular 11R22.5 or low profile, like 295/75R22.5 or 275/80R22.5?';
   }
   return '¿Es regular 11R22.5 o low profile, como 295/75R22.5 o 275/80R22.5?';
 }
 
-function noStockReply(size, text='') {
-  if (isEnglishMessage(text)) return `Sorry, we don't have tires in size ${size} in stock right now.`;
+function noStockReply(size, text='', session=null) {
+  if (isEnglishMessage(text, session)) return `Sorry, we don't have tires in size ${size} in stock right now.`;
   return `Lo siento, no tenemos llantas de la medida ${size} en stock en este momento.`;
 }
 
@@ -477,16 +477,16 @@ function formatInventoryOption(tire, index, isTruck) {
   return `${index+1}. *${label}* — $${tire.price}/llanta | ${tire.stock} en stock${isTruck ? ` | Pos: ${tire.position||'N/A'}` : ''}`;
 }
 
-function inventorySelectionQuestion(text='') {
-  return isEnglishMessage(text) ? 'Which one do you prefer?' : '¿Cuál prefieres?';
+function inventorySelectionQuestion(text='', session=null) {
+  return isEnglishMessage(text, session) ? 'Which one do you prefer?' : '¿Cuál prefieres?';
 }
 
-function inventoryQuantityQuestion(text='') {
-  return isEnglishMessage(text) ? 'How many tires do you need?' : '¿Cuántas llantas necesitas?';
+function inventoryQuantityQuestion(text='', session=null) {
+  return isEnglishMessage(text, session) ? 'How many tires do you need?' : '¿Cuántas llantas necesitas?';
 }
 
-function inventoryFollowupQuestion(optionCount, text='') {
-  return optionCount === 1 ? inventoryQuantityQuestion(text) : inventorySelectionQuestion(text);
+function inventoryFollowupQuestion(optionCount, text='', session=null) {
+  return optionCount === 1 ? inventoryQuantityQuestion(text, session) : inventorySelectionQuestion(text, session);
 }
 
 function buildExactInventoryReplyFromSearches(session, text='') {
@@ -497,7 +497,7 @@ function buildExactInventoryReplyFromSearches(session, text='') {
     return s.tires.map((t, i) => formatInventoryOption(t, i, isTruck)).join('\n');
   });
   const optionCount = searches.reduce((sum, s) => sum + (s.tires || []).length, 0);
-  return `${blocks.join('\n\n')}\n\n${inventoryFollowupQuestion(optionCount, text)}`;
+  return `${blocks.join('\n\n')}\n\n${inventoryFollowupQuestion(optionCount, text, session)}`;
 }
 
 function asksToRepeatInventoryOptions(text='') {
@@ -684,14 +684,21 @@ function wantsFinancingHandoff(text, session) {
   return /(?:necesito|quiero|me interesa|voy a|para)\s+(?:financiaci[oó]n|financiar|finance|financing)|aplicar|aplicaci[oó]n|application|solicitud|tramitar/i.test(text);
 }
 
-function isEnglishMessage(text) {
+function isEnglishMessage(text, session=null) {
+  if (session && session.language) return session.language === 'en';
   const spanishSignals = /\b(hola|buen[oa]s?|quiero|quer[ií]a|tienes?|tienen|ofrecen|ofreces|necesito|busco|precio|precios|cu[aá]nto|cuanto|medida|llanta|llantas|goma|gomas|financiaci[oó]n|financiamiento|cr[eé]dito|aplicaci[oó]n|cuota|inicial|dep[oó]sito|asesor|mayor|mayoreo|recoger|env[ií]o|entrega|gracias|si|sí)\b/i;
   if (spanishSignals.test(text)) return false;
-  return /\b(hi|hello|hey|how much|how much down|down payment|deposit|price|quote|tire|tires|need|looking|front|rear|drive|steer|trailer|delivery|pickup|financing|application|wholesale|bulk|fleet|yes|no|thanks|thank you)\b/i.test(text);
+  // Position words like "steer", "traction", "trailer", "front", "rear" and "drive"
+  // are common technical terms in Spanish chats; they should not flip the language.
+  return /\b(how much|how much down|down payment|i need|i'm looking|im looking|looking for|can i|get more info|do you have|price for|quote for|tire price|tires price|need tires?|need financing|send application|thank you)\b/i.test(text);
 }
 
-function financingInfoReply(text='') {
-  if (isEnglishMessage(text)) {
+function initialLanguageFromText(text='') {
+  return isEnglishMessage(text) ? 'en' : 'es';
+}
+
+function financingInfoReply(text='', session=null) {
+  if (isEnglishMessage(text, session)) {
     const lines = FINANCE_OPTIONS.map(f => `• *${f.name}*: ${f.noteEn}`).join('\n');
     return `We have these 4 financing options:\n\n${lines}\n\nDo you need financing?`;
   }
@@ -699,8 +706,8 @@ function financingInfoReply(text='') {
   return `Tenemos estas 4 opciones de financiación:\n\n${lines}\n\n¿Necesitas financiación?`;
 }
 
-function financingAdvisorReply(text='') {
-  if (isEnglishMessage(text)) return 'An advisor will assist you as soon as possible.';
+function financingAdvisorReply(text='', session=null) {
+  if (isEnglishMessage(text, session)) return 'An advisor will assist you as soon as possible.';
   return 'Te atenderemos a la mayor brevedad posible.';
 }
 
@@ -708,8 +715,8 @@ function wantsWholesale(text) {
   return /mayorista|mayoreo|al por mayor|por mayor|wholesale|distribuidor|distribuci[oó]n|bulk|volumen|flota|fleet/i.test(text);
 }
 
-function advisorHandoffReply(text='') {
-  if (isEnglishMessage(text)) return 'An advisor will assist you as soon as possible.';
+function advisorHandoffReply(text='', session=null) {
+  if (isEnglishMessage(text, session)) return 'An advisor will assist you as soon as possible.';
   return 'Te atenderemos a la mayor brevedad posible.';
 }
 
@@ -722,15 +729,15 @@ function wantsAdvisor(text) {
   return /asesor|representante|persona|humano|agente|vendedor|manager|supervisor|advisor|representative|human|salesperson|agent/i.test(text);
 }
 
-function outOfDeliveryZoneReply(text='') {
-  if (isEnglishMessage(text)) {
+function outOfDeliveryZoneReply(text='', session=null) {
+  if (isEnglishMessage(text, session)) {
     return 'We only offer delivery in the Miami area, and on Thursdays we go up to West Palm Beach.';
   }
   return 'Solo hacemos delivery en el área de Miami, y los jueves vamos hasta West Palm Beach.';
 }
 
-function askSizeForPositionReply(position, text='') {
-  if (isEnglishMessage(text)) return `What size do you need for ${position}?`;
+function askSizeForPositionReply(position, text='', session=null) {
+  if (isEnglishMessage(text, session)) return `What size do you need for ${position}?`;
   const label = position === 'steer' ? 'delantera'
     : position === 'traction' ? 'tracción'
     : position === 'trailer' ? 'trailer'
@@ -753,14 +760,14 @@ function isGenericInfoRequest(text) {
     && !asksOutOfDeliveryZone(text);
 }
 
-function initialGreetingReply(text='') {
-  if (isEnglishMessage(text)) return "Hi! I'm the Tires Depot virtual assistant. How can I help you?";
+function initialGreetingReply(text='', session=null) {
+  if (isEnglishMessage(text, session)) return "Hi! I'm the Tires Depot virtual assistant. How can I help you?";
   return '¡Hola! Soy el asistente virtual de Tires Depot. ¿Cómo puedo ayudarte?';
 }
 
-function withInitialAssistantIntro(reply, text='', isFirstInteraction=false) {
+function withInitialAssistantIntro(reply, text='', isFirstInteraction=false, session=null) {
   if (!isFirstInteraction || /asistente virtual|virtual assistant/i.test(reply)) return reply;
-  const intro = isEnglishMessage(text)
+  const intro = isEnglishMessage(text, session)
     ? "Hi! I'm the Tires Depot virtual assistant."
     : '¡Hola! Soy el asistente virtual de Tires Depot.';
   return `${intro}\n\n${reply}`;
@@ -805,6 +812,7 @@ function getSession(id) {
       name:          null,
       phone:         null,
       email:         null,
+      language:      null,
       step:          'greeting',
       logged:        false,
       emailOffered:  false,
@@ -916,7 +924,9 @@ Después pregunta cuántas llantas necesita y cómo prefiere recibirlas. Hay 3 o
 3. Pickup → pasa a recoger al local, sin descuento, sin delivery
 
 ESTILO:
-- Responde en el mismo idioma del cliente. Español por defecto. Inglés solo si el mensaje completo del cliente está claramente en inglés. Si el cliente escribe en español pero menciona un nombre propio en inglés como "American First Finance", responde en español. No mezcles idiomas salvo nombres técnicos como Steer, Traction, Trailer, Pickup, Delivery o nombres de financieras.
+- Responde en el mismo idioma del cliente. Español por defecto. Inglés solo si el mensaje completo del cliente está claramente en inglés. Si el cliente escribe en español pero menciona un nombre propio en inglés como "American First Finance", responde en español.
+- Las palabras técnicas "steer", "traction", "trailer", "front", "rear" o "drive" NO cambian el idioma por sí solas. Si la conversación viene en español y el cliente responde "steer", "traction" o "trailer", sigue respondiendo en español.
+- Cuando preguntes por posición en español, usa español primero: "delantera/direccional", "tracción/trasera" o "trailer/remolque". No hagas la pregunta principal en inglés como "Steer o Traction" si el cliente viene hablando español.
 - ULTRA CORTO. Frases sueltas. Máximo 2 líneas. Sin cortesías, sin introducciones, sin despedidas.
 - Tono consultivo, no pushy. No conviertas cada mensaje en "¿qué medida?" o "¿qué posición?". Haz esas preguntas solo cuando sean necesarias para ayudar.
 - UNA SOLA PREGUNTA POR MENSAJE. Nunca combines dos preguntas en el mismo mensaje. Primero resuelve la selección de llanta, LUEGO (en el siguiente mensaje) pregunta la modalidad de entrega.
@@ -937,6 +947,7 @@ CRÍTICO — COTIZACIONES: El tag [QUOTE:] contiene la cotización oficial calcu
 - Si no hay [QUOTE:] → NO inventes una cotización. Responde solo con la información disponible.
 
 Tags de contexto:
+[SESSION LANGUAGE: es|en] → idioma fijo de esta conversación. Responde siempre en ese idioma aunque el último mensaje tenga palabras técnicas o cortas en otro idioma.
 [CUSTOMER NAME: X] → ya tienes el nombre, no lo pidas
 [CUSTOMER PHONE: X] → ya tienes el teléfono
 [CUSTOMER EMAIL: X] → ya tienes el email
@@ -951,6 +962,7 @@ async function handleMessage(userId, incomingText, platform) {
   const text     = incomingText.trim();
   const isWA     = platform === 'whatsapp';
   const isFirstInteraction = session.history.length === 0;
+  if (!session.language) session.language = initialLanguageFromText(text);
 
   // Migrate old session structure if needed
   if (!session.current) {
@@ -974,7 +986,7 @@ async function handleMessage(userId, incomingText, platform) {
   if (isWA && !session.phone) session.phone = userId;
 
   if (isFirstInteraction && (isSimpleGreeting(text) || isGenericInfoRequest(text))) {
-    const reply = initialGreetingReply(text);
+    const reply = initialGreetingReply(text, session);
     session.step = 'searching';
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
@@ -982,7 +994,7 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   if (session.conversationEnded) {
-    const reply = advisorHandoffReply(text);
+    const reply = advisorHandoffReply(text, session);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -991,7 +1003,7 @@ async function handleMessage(userId, incomingText, platform) {
 
   if (wantsAdvisor(text)) {
     session.conversationEnded = true;
-    const reply = advisorHandoffReply(text);
+    const reply = advisorHandoffReply(text, session);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -1000,7 +1012,7 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   if (asksOutOfDeliveryZone(text)) {
-    const reply = outOfDeliveryZoneReply(text);
+    const reply = outOfDeliveryZoneReply(text, session);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -1011,7 +1023,7 @@ async function handleMessage(userId, incomingText, platform) {
   if (wantsWholesale(text)) {
     session.conversationEnded = true;
     session.wholesaleTransferRequested = true;
-    const reply = advisorHandoffReply(text);
+    const reply = advisorHandoffReply(text, session);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -1024,7 +1036,7 @@ async function handleMessage(userId, incomingText, platform) {
     session.awaitingFinanceNeedAnswer = false;
     session.financeTransferRequested = true;
     session.conversationEnded = true;
-    const reply = financingAdvisorReply(text);
+    const reply = financingAdvisorReply(text, session);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -1034,7 +1046,7 @@ async function handleMessage(userId, incomingText, platform) {
 
   if (wantsFinancing(text)) {
     session.awaitingFinanceNeedAnswer = true;
-    const reply = financingInfoReply(text);
+    const reply = financingInfoReply(text, session);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -1059,6 +1071,7 @@ async function handleMessage(userId, incomingText, platform) {
     const savedName  = session.name;
     const savedPhone = session.phone;
     const savedEmail = session.email;
+    const savedLanguage = session.language || initialLanguageFromText(text);
     const savedSearches            = session.searches                      || [];
     const savedSelectedTires       = session.selectedTires                 || {};
     const savedRequestedQty        = session.requestedQtyByPosition        || {};
@@ -1072,7 +1085,7 @@ async function handleMessage(userId, incomingText, platform) {
       history: [], tires: [], size: null, position: null,
       pendingPositions: [], shownPositions: [],
       origin: null, brand: null,
-      name: savedName, phone: savedPhone, email: savedEmail,
+      name: savedName, phone: savedPhone, email: savedEmail, language: savedLanguage,
       step: 'searching', logged: false, emailOffered: false, pendingOrder: null, promoAnswered: false,
       searches:            savedSearches,
       selectedTires:       savedSelectedTires,
@@ -1174,7 +1187,7 @@ async function handleMessage(userId, incomingText, platform) {
   const explicitPos = normalizePosition(text);
 
   if (!newSize && isRimOnlySize(text)) {
-    const reply = withInitialAssistantIntro(askPreciseSizeForRimReply(text), text, isFirstInteraction);
+    const reply = withInitialAssistantIntro(askPreciseSizeForRimReply(text, session), text, isFirstInteraction, session);
     session.awaitingSizeForPosition = true;
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
@@ -1235,7 +1248,7 @@ async function handleMessage(userId, incomingText, platform) {
   if (/all.?position|todas.?posicion/i.test(text)) session.current.position = 'trailer';
 
   if (pos && !newSize && !session.current.size) {
-    const reply = withInitialAssistantIntro(askSizeForPositionReply(pos, text), text, isFirstInteraction);
+    const reply = withInitialAssistantIntro(askSizeForPositionReply(pos, text, session), text, isFirstInteraction, session);
     session.awaitingSizeForPosition = true;
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
@@ -1268,6 +1281,7 @@ async function handleMessage(userId, incomingText, platform) {
 
   // ── Build context tags ────────────────────────────────────────────────────
   let contactContext = '';
+  contactContext += `\n[SESSION LANGUAGE: ${session.language || 'es'}]`;
   if (session.name)  contactContext += `\n[CUSTOMER NAME: ${session.name}]`;
   if (session.phone) contactContext += `\n[CUSTOMER PHONE: ${session.phone}]`;
   if (session.email) contactContext += `\n[CUSTOMER EMAIL: ${session.email}]`;
@@ -1364,7 +1378,7 @@ async function handleMessage(userId, incomingText, platform) {
         }
 
         // Lead logged only when order is confirmed with full customer data
-        deterministicReply = `${inventoryReplyParts.join('\n\n')}\n\n${inventoryFollowupQuestion(shownOptionCount, text)}`;
+        deterministicReply = `${inventoryReplyParts.join('\n\n')}\n\n${inventoryFollowupQuestion(shownOptionCount, text, session)}`;
 
       } else if (brandForSearch) {
         // No results with brand — retry without brand to show alternatives
@@ -1388,7 +1402,7 @@ async function handleMessage(userId, incomingText, platform) {
           session.current.tires = [];
           session.awaitingQuantity = false;
           inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. No hay stock de esa medida/posición.]`;
-          deterministicReply = noStockReply(session.current.size, text);
+          deterministicReply = noStockReply(session.current.size, text, session);
         }
 
         // Always mark this position as shown and process remaining pending positions
@@ -1419,14 +1433,14 @@ async function handleMessage(userId, incomingText, platform) {
         session.current.brand    = null;
         session.current.brandOnlyForCurrent = false;
         if (inventoryReplyParts.length > 0) {
-          deterministicReply = `${inventoryReplyParts.join('\n\n')}\n\n${inventoryFollowupQuestion(shownOptionCount, text)}`;
+          deterministicReply = `${inventoryReplyParts.join('\n\n')}\n\n${inventoryFollowupQuestion(shownOptionCount, text, session)}`;
         }
 
       } else {
         session.current.tires = [];
         session.awaitingQuantity = false;
         inventoryContext = `\n\n[INVENTORY DATA: Sin resultados para ${session.current.size}${session.current.position?' pos:'+session.current.position:''}. No hay stock de esa medida/posición.]`;
-        deterministicReply = noStockReply(session.current.size, text);
+        deterministicReply = noStockReply(session.current.size, text, session);
       }
     } catch (err) {
       console.error('Inventory fetch error:', err.message);
@@ -1435,7 +1449,7 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   if (deterministicReply) {
-    deterministicReply = withInitialAssistantIntro(deterministicReply, text, isFirstInteraction);
+    deterministicReply = withInitialAssistantIntro(deterministicReply, text, isFirstInteraction, session);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: deterministicReply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -1571,7 +1585,7 @@ async function handleMessage(userId, incomingText, platform) {
     messages:   session.history,
   });
 
-  const reply = withInitialAssistantIntro(response.content[0].text, text, isFirstInteraction);
+  const reply = withInitialAssistantIntro(response.content[0].text, text, isFirstInteraction, session);
   session.history.push({ role:'assistant', content: reply });
   // Extract total, order lines and modalidad from assistant reply
   const replyTotalMatch = reply.match(/TOTAL[^$]*\$([\d,]+\.\d{2})/i);
