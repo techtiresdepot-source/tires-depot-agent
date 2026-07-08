@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-07-08-explicit-cart-commands-v34';
+const BOT_VERSION = '2026-07-08-ai-pending-decline-v35';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -857,6 +857,25 @@ function cartReviewQuestion(text='', session=null) {
     : '¿Está todo correcto o quieres agregar o quitar algo?';
 }
 
+async function classifyPendingPositionReply(text, position, language='es') {
+  try {
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 40,
+      system: 'Classify a customer reply about a pending tire position. Return only JSON: {"action":"decline"} when they clearly reject all options for that position, otherwise {"action":"unclear"}. Do not infer additions, selections, quantities, or other actions.',
+      messages: [{
+        role: 'user',
+        content: `Language: ${language}\nPending position: ${position || 'unknown'}\nCustomer reply: ${text}`,
+      }],
+    });
+    const parsed = JSON.parse(response.content?.[0]?.text || '{}');
+    return parsed.action === 'decline' ? 'decline' : 'unclear';
+  } catch (err) {
+    console.error('Pending position classification error:', err.message);
+    return 'unclear';
+  }
+}
+
 function isActiveWooSale(tire, now=Date.now()) {
   if (!tire?.onSale || !tire.salePrice) return false;
   const from = tire.saleFrom ? Date.parse(tire.saleFrom) : null;
@@ -1148,6 +1167,7 @@ ESTILO:
 - Después de completar una línea, pregunta si quiere agregar algo más o ver su pedido. Al mostrar el carrito, permite agregar o quitar líneas. Solo cuando el cliente confirme que el carrito está correcto pregunta por monte, delivery o pickup y genera la cotización.
 - Si el cliente descarta una posición (por ejemplo, consiguió las steer más baratas en otro lugar), márcala como descartada: no vuelvas a pedir una elección para esa posición y no la incluyas en la cotización. Continúa únicamente con las posiciones que sí comprará.
 - No adivines cambios ambiguos del carrito. Para agregar o quitar productos, el cliente debe identificar claramente la línea, marca, producto o posición. Si no está claro, pide que lo especifique.
+- Cuando haya una posición pendiente y el cliente rechace todas sus opciones con lenguaje natural, el clasificador de intención puede marcar esa posición como descartada. Si la intención no es clara, no cambies el carrito.
 - Las promociones se verifican directamente con los campos vigentes de WooCommerce (on_sale, precio regular, precio de oferta y fechas). Si preguntan por una promoción anterior que ya terminó, informa que ya no está vigente y da el precio actual. Nunca conserves una promoción por memoria de la conversación.
 
 IMPORTANTE: Los tags [INVENTORY DATA:], [QUOTE:], [CUSTOMER NAME:], etc. son instrucciones internas — NUNCA los copies literalmente en tu respuesta al cliente. Usa su contenido para formular tu respuesta.
@@ -1982,7 +2002,30 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   if (!selectedOption) {
-    const pendingSearch = getNextUnselectedSearch(session);
+    let pendingSearch = getNextUnselectedSearch(session);
+    if (pendingSearch) {
+      const pendingAction = await classifyPendingPositionReply(
+        text,
+        pendingSearch.position,
+        session.language || 'es'
+      );
+      if (pendingAction === 'decline') {
+        const declinedPosition = pendingSearch.position || DEFAULT_POSITION_KEY;
+        session.declinedPositions[declinedPosition] = true;
+        delete session.selectedTires[declinedPosition];
+        delete session.selectedTiresBySearch[pendingSearch.key];
+        session.cartLines = session.cartLines.filter(line => line.position !== pendingSearch.position);
+        console.log(`[AI POSITION DECLINED] ${declinedPosition}`);
+        pendingSearch = getNextUnselectedSearch(session);
+        if (!pendingSearch && session.cartLines.some(line => line.tire && line.qty)) {
+          session.awaitingCartAction = true;
+          const reply = cartActionQuestion(text, session);
+          session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+          if (session.history.length > 6) session.history = session.history.slice(-6);
+          return reply;
+        }
+      }
+    }
     if (pendingSearch) {
       session.current.tires = pendingSearch.tires;
       session.current.position = pendingSearch.position;
