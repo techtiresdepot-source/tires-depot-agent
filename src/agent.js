@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-07-08-email-list-consent-v25';
+const BOT_VERSION = '2026-07-08-woocommerce-sale-status-v30';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -182,13 +182,13 @@ const WC_KEY  = process.env.WC_CONSUMER_KEY;
 const WC_SEC  = process.env.WC_CONSUMER_SECRET;
 const cache   = { data: null, ts: 0, ttl: 2 * 60 * 1000 }; // 2 min cache
 
-async function fetchAllInventory() {
-  if (cache.data && Date.now() - cache.ts < cache.ttl) return cache.data;
+async function fetchAllInventory(forceRefresh=false) {
+  if (!forceRefresh && cache.data && Date.now() - cache.ts < cache.ttl) return cache.data;
   const auth = Buffer.from(`${WC_KEY}:${WC_SEC}`).toString('base64');
   const all  = [];
   let page   = 1;
   while (true) {
-    const res   = await fetch(`${WC_BASE}/wp-json/wc/v3/products?per_page=100&page=${page}&status=publish&_fields=id,name,price,regular_price,sale_price,stock_status,stock_quantity,in_stock,manage_stock,purchasable,tags,attributes,categories`, { headers: { Authorization: `Basic ${auth}` }, signal: AbortSignal.timeout(20000) });
+    const res   = await fetch(`${WC_BASE}/wp-json/wc/v3/products?per_page=100&page=${page}&status=publish&_fields=id,name,price,regular_price,sale_price,on_sale,date_on_sale_from,date_on_sale_to,stock_status,stock_quantity,in_stock,manage_stock,purchasable,tags,attributes,categories`, { headers: { Authorization: `Basic ${auth}` }, signal: AbortSignal.timeout(20000) });
     if (!res.ok) throw new Error(`WC API error: ${res.status}`);
     const batch = await res.json();
     if (!batch.length) break;
@@ -220,6 +220,11 @@ async function fetchAllInventory() {
     id:       p.id,
     name:     p.name,
     price:    parseFloat(p.price) || parseFloat(p.regular_price) || parseFloat(p.sale_price) || 0,
+    regularPrice: parseFloat(p.regular_price) || 0,
+    salePrice:    parseFloat(p.sale_price) || 0,
+    onSale:       p.on_sale === true,
+    saleFrom:     p.date_on_sale_from || null,
+    saleTo:       p.date_on_sale_to || null,
     stock:    (p.stock_quantity ?? 0) || stockFromMeta(p),
     inStock:  p.stock_status === 'instock' || p.in_stock === true || (p.stock_quantity != null && p.stock_quantity > 0) || stockFromMeta(p) > 0,
     tags:     p.tags || [],
@@ -617,17 +622,22 @@ function ensureQuantityState(session) {
   delete session.pendingQty;
 }
 
-function setRequestedQty(session, posKey, qty) {
+function setRequestedQty(session, posKey, qty, searchKey=null) {
   const validQty = validRequestedQty(qty);
   if (!validQty) return false;
   ensureQuantityState(session);
   session.requestedQtyByPosition[posKey || DEFAULT_POSITION_KEY] = validQty;
+  if (searchKey) {
+    session.requestedQtyBySearch = session.requestedQtyBySearch || {};
+    session.requestedQtyBySearch[searchKey] = validQty;
+  }
   return true;
 }
 
-function getRequestedQty(session, posKey) {
+function getRequestedQty(session, posKey, searchKey=null) {
   ensureQuantityState(session);
-  return session.requestedQtyByPosition[posKey]
+  return (searchKey && session.requestedQtyBySearch?.[searchKey])
+    || session.requestedQtyByPosition[posKey]
     || session.requestedQtyByPosition[DEFAULT_POSITION_KEY]
     || 1;
 }
@@ -679,11 +689,14 @@ function getNextUnselectedSearch(session) {
   const seenPositions = new Set();
   for (const search of session.searches || []) {
     if (!search?.tires?.length) continue;
+    if (!search.position && (session.searches || []).some(other =>
+      other !== search && other.position && other.size === search.size
+    )) continue;
     const posKey = search.position || DEFAULT_POSITION_KEY;
     if (seenPositions.has(posKey)) continue;
     seenPositions.add(posKey);
     if (session.declinedPositions?.[posKey]) continue;
-    if (!session.selectedTires?.[posKey]) return search;
+    if (!session.selectedTiresBySearch?.[search.key]) return search;
   }
   return null;
 }
@@ -779,6 +792,101 @@ function completedOrderReply(modalidad, text='', session=null) {
     : 'Gracias. Tu pedido quedó registrado. Puedes recogerlo en *12301 NW 116th Ave, Suite 106, Medley FL 33178*, Lun-Vie 9am-5pm o Sáb 9am-1pm.';
 }
 
+function cartSummary(session, text='') {
+  const english = isEnglishMessage(text, session);
+  const lines = (session.cartLines || []).filter(line => line.tire && line.qty);
+  if (!lines.length) return english ? 'Your cart is empty.' : 'Tu carrito está vacío.';
+  const title = english ? '*YOUR ORDER*' : '*TU PEDIDO*';
+  return [
+    title,
+    ...lines.map((line, index) => {
+      const position = line.position ? ` | ${line.position}` : '';
+      const unit = english ? 'tire' : 'llanta';
+      return `${index + 1}. ${line.qty}x ${line.tire.name || `${line.tire.brand} ${line.size}`}${position} | $${line.tire.price}/${unit}`;
+    }),
+  ].join('\n');
+}
+
+function removeCartLine(session, text='') {
+  const lines = (session.cartLines || []).filter(line => line.tire && line.qty);
+  const indexMatch = text.match(/(?:quita|quitar|elimina|eliminar|saca|sacar|remove|delete)\s+(?:la\s+|el\s+|opci[oó]n\s+|#)?([1-9][0-9]?)/i);
+  let target = indexMatch ? lines[Number(indexMatch[1]) - 1] : null;
+  if (!target) {
+    const lower = text.toLowerCase();
+    target = lines.find(line =>
+      (line.tire.brand && lower.includes(line.tire.brand.toLowerCase()))
+      || (line.tire.name && lower.includes(line.tire.name.toLowerCase()))
+    );
+  }
+  if (!target) return false;
+  session.cartLines = session.cartLines.filter(line => line.key !== target.key);
+  return true;
+}
+
+function cartActionQuestion(text='', session=null) {
+  return isEnglishMessage(text, session)
+    ? 'Would you like to add anything else, or should I show you your order?'
+    : '¿Quieres agregar algo más o te muestro tu pedido?';
+}
+
+function cartReviewQuestion(text='', session=null) {
+  return isEnglishMessage(text, session)
+    ? 'Is everything correct, or would you like to add or remove something?'
+    : '¿Está todo correcto o quieres agregar o quitar algo?';
+}
+
+function isActiveWooSale(tire, now=Date.now()) {
+  if (!tire?.onSale || !tire.salePrice) return false;
+  const from = tire.saleFrom ? Date.parse(tire.saleFrom) : null;
+  const to = tire.saleTo ? Date.parse(tire.saleTo) : null;
+  return (!from || Number.isNaN(from) || now >= from)
+    && (!to || Number.isNaN(to) || now <= to);
+}
+
+function asksAboutTirePromotion(text='') {
+  return /promoci[oó]n|oferta|especial de la semana|llanta de la semana|tire of the week|on sale|en sale|sale price|special price/i.test(text);
+}
+
+function promotionReply(inventory, text='', session=null) {
+  const english = isEnglishMessage(text, session);
+  const size = extractTireSize(text);
+  const brand = KNOWN_BRANDS.find(item => text.toLowerCase().includes(item.toLowerCase()));
+  let candidates = inventory.filter(tire =>
+    (!size || normalizeSize(tire.size) === normalizeSize(size))
+    && (!brand || tire.brand?.toLowerCase() === brand.toLowerCase() || tire.name.toLowerCase().includes(brand.toLowerCase()))
+  );
+
+  if (!size && !brand) {
+    const contextualTire = [...(session?.cartLines || [])].reverse().find(line => line.tire)?.tire
+      || (session?.lastShownSearchKey && session?.selectedTiresBySearch?.[session.lastShownSearchKey]);
+    candidates = contextualTire
+      ? inventory.filter(tire => tire.id === contextualTire.id)
+      : inventory.filter(tire => isActiveWooSale(tire));
+  }
+
+  const active = candidates.filter(tire => isActiveWooSale(tire));
+  if (active.length) {
+    const lines = active.map(tire => {
+      const regular = tire.regularPrice && tire.regularPrice !== tire.salePrice
+        ? (english ? ` (regular $${tire.regularPrice})` : ` (regular $${tire.regularPrice})`)
+        : '';
+      return `• ${tire.name} — $${tire.salePrice}/${english ? 'tire' : 'llanta'}${regular} | ${tire.stock} ${english ? 'in stock' : 'en stock'}`;
+    });
+    return `${english ? 'Current promotion:' : 'Promoción vigente:'}\n\n${lines.join('\n')}`;
+  }
+
+  if (candidates.length) {
+    const tire = candidates[0];
+    return english
+      ? `${tire.name} is no longer on promotion. Its current price is $${tire.price}/tire.`
+      : `${tire.name} ya no está en promoción. Su precio actual es $${tire.price}/llanta.`;
+  }
+
+  return english
+    ? 'That promotion is no longer active. I could not identify the exact tire from your message.'
+    : 'Esa promoción ya no está vigente. No pude identificar la llanta exacta en tu mensaje.';
+}
+
 function asksOutOfDeliveryZone(text) {
   return /\b(houston|texas|tx|orlando|tampa|jacksonville|georgia|atlanta|new york|ny|california|los angeles)\b/i.test(text)
     && /\b(delivery|deliver|env[ií]o|entrega|llevar|mandar)\b/i.test(text);
@@ -860,6 +968,8 @@ function saveCurrentSearch(session) {
   };
   if (existing >= 0) session.searches[existing] = entry;
   else session.searches.push(entry);
+  session.lastShownSearchKey = entry.key;
+  return entry;
 }
 
 function getSession(id) {
@@ -868,12 +978,15 @@ function getSession(id) {
       history:       [],
       tires:         [],
       selectedTires: {},
+      selectedTiresBySearch: {},
+      cartLines: [],
       declinedPositions: {},
       size:          null,
       position:      null,
       pendingPositions: [],
       shownPositions:   [],
       requestedQtyByPosition: {},
+      requestedQtyBySearch: {},
       brand:         null,
       name:          null,
       phone:         null,
@@ -1003,10 +1116,15 @@ ESTILO:
 - Nunca inventes inventario — solo usa [INVENTORY DATA]
 - Si el cliente dice cuántas llantas de cada posición necesita (ej: "2 steer y 8 traction") → muestra primero los resultados de una posición y luego di que buscarás la otra. No preguntes confirmaciones innecesarias.
 - Cuando el cliente responda con un número después de ver una lista de opciones, interpreta ese número como la SELECCIÓN de esa opción (ej: responde "2" → elige la opción #2 de la lista), NO como cantidad. La cantidad ya se conoce del mensaje inicial.
+- Si responde con número + marca/modelo (ej: "8 Sunfull"), el número es la CANTIDAD y la marca/modelo es la SELECCIÓN. Guarda ambos datos en la posición de la lista mostrada.
+- "Radial" o "radiales" describe la construcción de la llanta; NO es una medida ni una posición. Si dice "2 radiales", conserva cantidad 2 y pregunta la medida si no existe en sesión; si ya existe, pregunta para qué posición las necesita. No ejecutes una búsqueda general.
 - Si hay varias posiciones pendientes: muestra las opciones de una posición → espera que el cliente elija → confirma su elección → ENTONCES muestra las opciones de la siguiente posición. NO asumas ninguna selección que el cliente no haya hecho explícitamente.
 - Si una posición tiene varias opciones (ej: 2 Firestone diferentes), el cliente DEBE elegir cuál antes de continuar. No tomes la primera por defecto.
 - Steer, traction, trailer y all position son posiciones independientes. Antes de pedir modalidad, cotizar o confirmar, debe existir una selección propia para CADA posición consultada. "All position" NUNCA significa trailer.
+- Un pedido puede contener múltiples líneas con diferentes tamaños, posiciones y marcas, incluso dos productos distintos de la misma posición. Conserva cada combinación seleccionada con su propia cantidad; nunca reemplaces una línea anterior solo porque comparte posición o tamaño.
+- Después de completar una línea, pregunta si quiere agregar algo más o ver su pedido. Al mostrar el carrito, permite agregar o quitar líneas. Solo cuando el cliente confirme que el carrito está correcto pregunta por monte, delivery o pickup y genera la cotización.
 - Si el cliente descarta una posición (por ejemplo, consiguió las steer más baratas en otro lugar), márcala como descartada: no vuelvas a pedir una elección para esa posición y no la incluyas en la cotización. Continúa únicamente con las posiciones que sí comprará.
+- Las promociones se verifican directamente con los campos vigentes de WooCommerce (on_sale, precio regular, precio de oferta y fechas). Si preguntan por una promoción anterior que ya terminó, informa que ya no está vigente y da el precio actual. Nunca conserves una promoción por memoria de la conversación.
 
 IMPORTANTE: Los tags [INVENTORY DATA:], [QUOTE:], [CUSTOMER NAME:], etc. son instrucciones internas — NUNCA los copies literalmente en tu respuesta al cliente. Usa su contenido para formular tu respuesta.
 CRÍTICO — COTIZACIONES: El tag [QUOTE:] contiene la cotización oficial calculada por el sistema.
@@ -1051,6 +1169,9 @@ async function handleMessage(userId, incomingText, platform) {
   }
   if (!session.current.tires) session.current.tires = [];
   if (!session.selectedTires) session.selectedTires = {};
+  if (!session.selectedTiresBySearch) session.selectedTiresBySearch = {};
+  if (!session.cartLines) session.cartLines = [];
+  if (!session.requestedQtyBySearch) session.requestedQtyBySearch = {};
   if (!session.declinedPositions) session.declinedPositions = {};
   if (!session.searches) session.searches = [];
   ensureQuantityState(session);
@@ -1059,6 +1180,9 @@ async function handleMessage(userId, incomingText, platform) {
   declinedNow.forEach(position => {
     session.declinedPositions[position] = true;
     delete session.selectedTires[position];
+    (session.searches || [])
+      .filter(search => search.position === position)
+      .forEach(search => delete session.selectedTiresBySearch[search.key]);
     console.log(`[POSITION DECLINED] ${position}`);
   });
   const isPositionDeclineMessage = declinedNow.length > 0;
@@ -1133,6 +1257,115 @@ async function handleMessage(userId, incomingText, platform) {
     if (session.history.length > 6) session.history = session.history.slice(-6);
     console.log(`[FINANCE INFO] phone=${session.phone || userId} text="${text.substring(0,80)}"`);
     return reply;
+  }
+
+  if (asksAboutTirePromotion(text)) {
+    try {
+      const inventory = await fetchAllInventory(true);
+      const reply = promotionReply(inventory, text, session);
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    } catch (err) {
+      console.error('Promotion lookup error:', err.message);
+      const reply = isEnglishMessage(text, session)
+        ? 'I could not verify the current promotion right now. Please try again shortly.'
+        : 'No pude verificar la promoción vigente en este momento. Inténtalo nuevamente en unos minutos.';
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+  }
+
+  const wantsCartReview = /mu[eé]strame|mostrar?|ver (?:el |mi )?(?:pedido|carrito)|revisar? (?:el |mi )?(?:pedido|carrito)|eso es todo|nada m[aá]s|no necesito m[aá]s|show (?:my |the )?(?:order|cart)|checkout|that's all|nothing else/i.test(text);
+  const wantsCartAddition = /agrega|agregar|añade|añadir|algo m[aá]s|otra llanta|otras llantas|add|another tire|more tires/i.test(text);
+  const wantsCartRemoval = /quita|quitar|elimina|eliminar|saca|sacar|remove|delete/i.test(text);
+  const confirmsCart = /^(?:s[ií]|yes|correcto|est[aá] bien|todo correcto|as[ií] est[aá] bien|confirmo|ok|okay|dale)[.! ]*$/i.test(text);
+  const mentionsKnownBrand = KNOWN_BRANDS.some(brand => text.toLowerCase().includes(brand.toLowerCase()));
+
+  if (session.awaitingCartAction) {
+    if (wantsCartRemoval) {
+      const removed = removeCartLine(session, text);
+      const reply = removed
+        ? `${cartSummary(session, text)}\n\n${cartReviewQuestion(text, session)}`
+        : `${cartSummary(session, text)}\n\n${isEnglishMessage(text, session) ? 'Tell me which line number or brand you want to remove.' : 'Dime qué número de línea o marca quieres quitar.'}`;
+      session.awaitingCartAction = false;
+      session.awaitingCartConfirmation = true;
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+    if (wantsCartReview) {
+      session.awaitingCartAction = false;
+      session.awaitingCartConfirmation = true;
+      const reply = `${cartSummary(session, text)}\n\n${cartReviewQuestion(text, session)}`;
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+    if (wantsCartAddition && !extractTireSize(text) && !normalizePosition(text) && !mentionsKnownBrand) {
+      session.awaitingCartAction = false;
+      const reply = isEnglishMessage(text, session)
+        ? 'What tire size or position would you like to add?'
+        : '¿Qué medida o posición quieres agregar?';
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+    if (!extractTireSize(text) && !normalizePosition(text) && !mentionsKnownBrand) {
+      const reply = cartActionQuestion(text, session);
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+    session.awaitingCartAction = false;
+  }
+
+  if (session.awaitingCartConfirmation) {
+    if (wantsCartRemoval) {
+      const removed = removeCartLine(session, text);
+      const reply = removed
+        ? `${cartSummary(session, text)}\n\n${cartReviewQuestion(text, session)}`
+        : `${cartSummary(session, text)}\n\n${isEnglishMessage(text, session) ? 'Tell me which line number or brand you want to remove.' : 'Dime qué número de línea o marca quieres quitar.'}`;
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+    if (confirmsCart) {
+      if (!(session.cartLines || []).some(line => line.tire && line.qty)) {
+        session.awaitingCartConfirmation = false;
+        const reply = isEnglishMessage(text, session)
+          ? 'Your cart is empty. What tire size or position would you like to add?'
+          : 'Tu carrito está vacío. ¿Qué medida o posición quieres agregar?';
+        session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+        if (session.history.length > 6) session.history = session.history.slice(-6);
+        return reply;
+      }
+      session.awaitingCartConfirmation = false;
+      session.cartConfirmed = true;
+      const reply = isEnglishMessage(text, session)
+        ? 'Will you mount with us (-$5/tire), use free delivery in the Miami area, or pick them up?'
+        : '¿Montas con nosotros (-$5/llanta), prefieres delivery gratis en el área de Miami o pasas a recogerlas?';
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+    if (wantsCartAddition && !extractTireSize(text) && !normalizePosition(text) && !mentionsKnownBrand) {
+      session.awaitingCartConfirmation = false;
+      const reply = isEnglishMessage(text, session)
+        ? 'What tire size or position would you like to add?'
+        : '¿Qué medida o posición quieres agregar?';
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+    if (!extractTireSize(text) && !normalizePosition(text) && !mentionsKnownBrand) {
+      const reply = `${cartSummary(session, text)}\n\n${cartReviewQuestion(text, session)}`;
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+    session.awaitingCartConfirmation = false;
   }
 
   if (asksToRepeatInventoryOptions(text)) {
@@ -1306,6 +1539,41 @@ async function handleMessage(userId, incomingText, platform) {
   const newSize = extractTireSize(text);
   const sizeMatch = newSize ? [newSize] : null;
   const explicitPos = normalizePosition(text);
+  const radialQtyMatch = text.match(/\b([1-9][0-9]?)\s+(?:llantas?\s+|gomas?\s+|tires?\s+)?radiales?\b/i);
+
+  if (radialQtyMatch && !explicitPos) {
+    session.pendingRadialQty = validRequestedQty(radialQtyMatch[1]);
+    const needsSize = !session.current.size;
+    session.awaitingRadialSize = needsSize;
+    session.awaitingRadialPosition = !needsSize;
+    const reply = needsSize
+      ? (isEnglishMessage(text, session) ? 'What tire size do you need?' : '¿Qué medida de llanta necesitas?')
+      : (isEnglishMessage(text, session)
+          ? 'For which position: steer, traction, trailer, or all position?'
+          : '¿Para qué posición: direccional, tracción, trailer o all position?');
+    session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
+  }
+
+  if (session.awaitingRadialSize && newSize && !explicitPos) {
+    session.current.size = newSize;
+    session.awaitingRadialSize = false;
+    session.awaitingRadialPosition = true;
+    const reply = isEnglishMessage(text, session)
+      ? 'For which position: steer, traction, trailer, or all position?'
+      : '¿Para qué posición: direccional, tracción, trailer o all position?';
+    session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
+  }
+
+  if (explicitPos && session.pendingRadialQty) {
+    setRequestedQty(session, explicitPos, session.pendingRadialQty);
+    session.pendingRadialQty = null;
+    session.awaitingRadialSize = false;
+    session.awaitingRadialPosition = false;
+  }
 
   if (!newSize && isRimOnlySize(text)) {
     const reply = withInitialAssistantIntro(askPreciseSizeForRimReply(text, session), text, isFirstInteraction, session);
@@ -1333,7 +1601,19 @@ async function handleMessage(userId, incomingText, platform) {
   // Detect requested quantities. Bare numbers are intentionally ignored here:
   // in this flow they are option indexes unless paired with tire units/position.
   const qtyPosMatches = extractPositionQuantities(text);
-  const generalQty = extractGeneralQuantity(text);
+  const namedQtyMatch = text.match(/^\s*([1-9][0-9]?)\s+(.+?)\s*$/);
+  const tiresForNamedQty = session.current.tires?.length
+    ? session.current.tires
+    : (getLastSearch(session)?.tires || []);
+  const namedQtyTire = namedQtyMatch
+    ? tiresForNamedQty.find(tire => {
+        const requestedName = namedQtyMatch[2].toLowerCase();
+        return (tire.brand && requestedName.includes(tire.brand.toLowerCase()))
+          || (tire.name && tire.name.toLowerCase().includes(requestedName));
+      })
+    : null;
+  const quantityWithNamedSelection = namedQtyTire ? validRequestedQty(namedQtyMatch[1]) : null;
+  const generalQty = extractGeneralQuantity(text) || quantityWithNamedSelection;
   let inputConsumedAsQuantity = false;
   if (qtyPosMatches.length > 0) {
     qtyPosMatches.forEach(({ posKey, qty }) => setRequestedQty(session, posKey, qty));
@@ -1341,14 +1621,20 @@ async function handleMessage(userId, incomingText, platform) {
     inputConsumedAsQuantity = true;
     console.log('[QTY BY POSITION]', JSON.stringify(session.requestedQtyByPosition));
   } else if (generalQty) {
-    setRequestedQty(session, session.current.position || DEFAULT_POSITION_KEY, generalQty);
+    const qtyPositionKey = quantityWithNamedSelection
+      ? getSelectionPositionKey(session)
+      : (session.current.position || DEFAULT_POSITION_KEY);
+    setRequestedQty(session, qtyPositionKey, generalQty, quantityWithNamedSelection ? session.lastShownSearchKey : null);
     session.awaitingQuantity = false;
     inputConsumedAsQuantity = true;
     console.log('[QTY DEFAULT]', JSON.stringify(session.requestedQtyByPosition));
   } else if (session.awaitingQuantity) {
     const bareQty = extractBareQuantity(text);
     if (bareQty) {
-      setRequestedQty(session, getSelectionPositionKey(session), bareQty);
+      setRequestedQty(session, getSelectionPositionKey(session), bareQty, session.lastShownSearchKey);
+      const pendingLine = session.cartLines?.find(line => line.key === session.pendingCartLineKey);
+      if (pendingLine) pendingLine.qty = bareQty;
+      session.pendingCartLineKey = null;
       session.awaitingQuantity = false;
       inputConsumedAsQuantity = true;
       console.log('[QTY BARE]', JSON.stringify(session.requestedQtyByPosition));
@@ -1582,17 +1868,60 @@ async function handleMessage(userId, incomingText, platform) {
   const _availForSelection = session.current.tires.length > 0
     ? session.current.tires
     : (getLastSearch(session)?.tires || []);
-  const selectedOption = inputConsumedAsQuantity ? null : findSelection(text, _availForSelection);
+  const selectedOption = inputConsumedAsQuantity && !quantityWithNamedSelection
+    ? null
+    : findSelection(text, _availForSelection);
   if (selectedOption) {
     const posKey = getSelectionPositionKey(session);
+    const selectionSearch = session.searches.find(search => search.key === session.lastShownSearchKey)
+      || getLastSearch(session);
     session.awaitingOrderConfirmation = false;
     session.selectedTires[posKey] = selectedOption.tire;
+    if (selectionSearch) {
+      session.selectedTiresBySearch[selectionSearch.key] = selectedOption.tire;
+      const explicitQty = session.requestedQtyBySearch[selectionSearch.key]
+        || session.requestedQtyByPosition[posKey]
+        || session.requestedQtyByPosition[DEFAULT_POSITION_KEY]
+        || null;
+      const lineKey = `${selectionSearch.key}|${selectedOption.tire.id || selectedOption.tire.name}`;
+      const existingLine = session.cartLines.find(line => line.key === lineKey);
+      if (existingLine) {
+        if (explicitQty) existingLine.qty = explicitQty;
+      } else {
+        session.cartLines.push({
+          key: lineKey,
+          searchKey: selectionSearch.key,
+          size: selectionSearch.size,
+          position: selectionSearch.position,
+          tire: selectedOption.tire,
+          qty: explicitQty,
+        });
+      }
+      session.pendingCartLineKey = explicitQty ? null : lineKey;
+    }
     console.log(`[SELECTION] posKey=${posKey} tire=${selectedOption.tire.brand} idx=${selectedOption.idx} kind=${selectedOption.kind}`);
 
     let pendingSearch = getNextUnselectedSearch(session);
     while (pendingSearch?.tires?.length === 1) {
       const pendingPosKey = pendingSearch.position || DEFAULT_POSITION_KEY;
       session.selectedTires[pendingPosKey] = pendingSearch.tires[0];
+      session.selectedTiresBySearch[pendingSearch.key] = pendingSearch.tires[0];
+      const autoQty = session.requestedQtyBySearch[pendingSearch.key]
+        || session.requestedQtyByPosition[pendingPosKey]
+        || session.requestedQtyByPosition[DEFAULT_POSITION_KEY]
+        || null;
+      const autoLineKey = `${pendingSearch.key}|${pendingSearch.tires[0].id || pendingSearch.tires[0].name}`;
+      if (!session.cartLines.some(line => line.key === autoLineKey)) {
+        session.cartLines.push({
+          key: autoLineKey,
+          searchKey: pendingSearch.key,
+          size: pendingSearch.size,
+          position: pendingSearch.position,
+          tire: pendingSearch.tires[0],
+          qty: autoQty,
+        });
+      }
+      if (!autoQty) session.pendingCartLineKey = autoLineKey;
       console.log(`[AUTO SELECTION] posKey=${pendingPosKey} tire=${pendingSearch.tires[0].brand}`);
       pendingSearch = getNextUnselectedSearch(session);
     }
@@ -1601,6 +1930,7 @@ async function handleMessage(userId, incomingText, platform) {
       session.current.position = pendingSearch.position;
       session.current.shownPositions = [pendingSearch.position || DEFAULT_POSITION_KEY];
       session.lastShownPositions = [...session.current.shownPositions];
+      session.lastShownSearchKey = pendingSearch.key;
       const reply = pendingPositionSelectionReply(pendingSearch, text, session);
       session.history.push({ role: 'user', content: text });
       session.history.push({ role: 'assistant', content: reply });
@@ -1633,9 +1963,31 @@ async function handleMessage(userId, incomingText, platform) {
       session.current.position = pendingSearch.position;
       session.current.shownPositions = [pendingSearch.position || DEFAULT_POSITION_KEY];
       session.lastShownPositions = [...session.current.shownPositions];
+      session.lastShownSearchKey = pendingSearch.key;
       const reply = pendingPositionSelectionReply(pendingSearch, text, session);
       session.history.push({ role: 'user', content: text });
       session.history.push({ role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+  }
+  if (selectedOption || inputConsumedAsQuantity) {
+    const missingQtyLine = session.cartLines.find(line => !line.qty);
+    if (missingQtyLine) {
+      const missingSearch = session.searches.find(search => search.key === missingQtyLine.searchKey);
+      session.pendingCartLineKey = missingQtyLine.key;
+      session.awaitingQuantity = true;
+      if (missingSearch) {
+        session.lastShownSearchKey = missingSearch.key;
+        session.current.position = missingSearch.position;
+        session.current.shownPositions = [missingSearch.position || DEFAULT_POSITION_KEY];
+        session.lastShownPositions = [...session.current.shownPositions];
+      }
+      const positionLabel = missingQtyLine.position ? ` ${missingQtyLine.position}` : '';
+      const reply = isEnglishMessage(text, session)
+        ? `How many ${missingQtyLine.tire.brand} ${missingQtyLine.size}${positionLabel} tires do you need?`
+        : `¿Cuántas llantas ${missingQtyLine.tire.brand} ${missingQtyLine.size}${positionLabel} necesitas?`;
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
       if (session.history.length > 6) session.history = session.history.slice(-6);
       return reply;
     }
@@ -1644,9 +1996,8 @@ async function handleMessage(userId, incomingText, platform) {
       && Object.values(session.selectedTires || {}).some(Boolean)
       && !session.modalidad
       && !session.confirmedModalidad) {
-    const reply = isEnglishMessage(text, session)
-      ? 'Will you mount with us (-$5/tire), use free delivery in the Miami area, or pick them up?'
-      : '¿Montas con nosotros (-$5/llanta), prefieres delivery gratis en el área de Miami o pasas a recogerlas?';
+    session.awaitingCartAction = true;
+    const reply = cartActionQuestion(text, session);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -1655,8 +2006,10 @@ async function handleMessage(userId, incomingText, platform) {
 
   if (selectedOption) {
     const posKey = getSelectionPositionKey(session);
+    const selectedSearchKey = session.lastShownSearchKey;
     const hasRequestedQty = !!(
-      session.requestedQtyByPosition?.[posKey]
+      session.requestedQtyBySearch?.[selectedSearchKey]
+      || session.requestedQtyByPosition?.[posKey]
       || session.requestedQtyByPosition?.[DEFAULT_POSITION_KEY]
     );
     if (!hasRequestedQty) {
@@ -1668,9 +2021,8 @@ async function handleMessage(userId, incomingText, platform) {
       return reply;
     }
     if (!session.modalidad && !session.confirmedModalidad) {
-      const reply = isEnglishMessage(text, session)
-        ? 'Will you mount with us (-$5/tire), use free delivery in the Miami area, or pick them up?'
-        : '¿Montas con nosotros (-$5/llanta), prefieres delivery gratis en el área de Miami o pasas a recogerlas?';
+      session.awaitingCartAction = true;
+      const reply = cartActionQuestion(text, session);
       session.history.push({ role: 'user', content: text });
       session.history.push({ role: 'assistant', content: reply });
       if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -1681,9 +2033,8 @@ async function handleMessage(userId, incomingText, platform) {
       && Object.values(session.selectedTires || {}).some(Boolean)
       && !session.modalidad
       && !session.confirmedModalidad) {
-    const reply = isEnglishMessage(text, session)
-      ? 'Will you mount with us (-$5/tire), use free delivery in the Miami area, or pick them up?'
-      : '¿Montas con nosotros (-$5/llanta), prefieres delivery gratis en el área de Miami o pasas a recogerlas?';
+    session.awaitingCartAction = true;
+    const reply = cartActionQuestion(text, session);
     session.history.push({ role: 'user', content: text });
     session.history.push({ role: 'assistant', content: reply });
     if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -1704,38 +2055,39 @@ async function handleMessage(userId, incomingText, platform) {
   const wantsFullQuote = !isConfirmationMsg && (hasDeliveryChoice 
     || /cotiz|total|cuanto|precio|quote|how much|desglose|\bmonte\b|\bmontar\b|delivery|recoger|pickup|paso a|llevarme|envio|envío/i.test(text));
   console.log(`[QUOTE CHECK] wantsFullQuote=${wantsFullQuote} searches=${session.searches?.length} hasDelivery=${hasDeliveryChoice} isConfirm=${isConfirmationMsg} logged=${session.logged}`);
-  const resolvedSearches = (session.searches || []).filter(s => {
+  const relevantSearches = (session.searches || []).filter(search =>
+    search.position || !(session.searches || []).some(other =>
+      other !== search && other.position && other.size === search.size
+    )
+  );
+  const resolvedSearches = relevantSearches.filter(s => {
     const posKey = s.position || DEFAULT_POSITION_KEY;
-    return !!session.selectedTires?.[posKey] || !!session.declinedPositions?.[posKey];
+    return !!session.selectedTiresBySearch?.[s.key] || !!session.declinedPositions?.[posKey];
   });
-  const allSearchesResolved = session.searches?.length > 0
-    && resolvedSearches.length === session.searches.length;
+  const allSearchesResolved = relevantSearches.length > 0
+    && resolvedSearches.length === relevantSearches.length;
+  const activeCartLines = (session.cartLines || []).filter(line => line.tire);
+  const allCartLinesHaveQty = activeCartLines.length > 0 && activeCartLines.every(line => line.qty);
 
-  if (wantsFullQuote && session.searches && session.searches.length > 1 && allSearchesResolved) {
+  if (wantsFullQuote && allSearchesResolved && allCartLinesHaveQty && activeCartLines.length > 1) {
     const combinedLines = ['*COTIZACION COMPLETA*'];
     let grandTotal = 0;
     const mount    = session.modalidad === 'monte';
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas/i.test(text);
 
-    const seenKeys = new Set();
     let totalTires = 0, totalTax = 0, totalMount = 0;
-    session.searches.forEach(s => {
-      if (!s.tires || s.tires.length === 0) return;
-      const dedupeKey = s.position || s.key || 'default';
-      if (seenKeys.has(dedupeKey)) return;
-      seenKeys.add(dedupeKey);
-      const posKey = s.position || 'default';
-      const tire   = session.selectedTires?.[posKey];
-      if (!tire) return;
-      console.log(`[COMBINED TIRE] pos=${posKey} selected=${session.selectedTires?.[posKey]?.brand} default=${session.selectedTires?.['default']?.brand} using=${tire.brand}`);
-      const qty    = getRequestedQty(session, posKey);
+    session.cartLines.filter(line => line.tire && line.qty).forEach(line => {
+      const tire = line.tire;
+      const qty = line.qty;
+      const position = line.position;
+      console.log(`[COMBINED TIRE] search=${line.searchKey} pos=${position || 'default'} using=${tire.brand}`);
       const c = calcTotal(tire, qty, mount, valve, disposal);
       const lineTotal = tire.price * qty;
       totalTires += lineTotal;
       totalTax   += c.tax;
       totalMount += c.mc;
-      combinedLines.push(`🛞 *${qty}x ${tire.brand} ${tire.size}${s.position?' '+s.position:''}*\n   $${tire.price}/llanta × ${qty} = $${lineTotal.toFixed(2)}`);
+      combinedLines.push(`🛞 *${qty}x ${tire.brand} ${tire.size}${position?' '+position:''}*\n   $${tire.price}/llanta × ${qty} = $${lineTotal.toFixed(2)}`);
     });
     const taxBase = totalTires;
     const computedTax = taxBase * BIZ.taxRate;
@@ -1756,14 +2108,10 @@ async function handleMessage(userId, incomingText, platform) {
     }
     session.lastQuoteTotal = grandTotal.toFixed(2);
     // Snapshot order lines with correct qty/brand at quote time
-    session.confirmedOrderLines = Array.from(seenKeys).map(posKey => {
-      const s = session.searches.find(s => (s.position || 'default') === posKey);
-      if (!s || !s.tires?.length) return null;
-      const tire = session.selectedTires?.[posKey];
-      if (!tire) return null;
-      const qty  = getRequestedQty(session, posKey);
-      return `${qty}x ${tire.brand} ${tire.size}${s.position ? ' ' + s.position : ''}`;
-    }).filter(Boolean).join(' | ');
+    session.confirmedOrderLines = session.cartLines
+      .filter(line => line.tire && line.qty)
+      .map(line => `${line.qty}x ${line.tire.brand} ${line.tire.size}${line.position ? ' ' + line.position : ''}`)
+      .join(' | ');
     session.confirmedModalidad = session.modalidad || 'pendiente';
     console.log(`[COMBINED TOTAL] $${session.lastQuoteTotal} | lines=${session.confirmedOrderLines} | modalidad=${session.confirmedModalidad}`);
     const quoteText = combinedLines.join('\n');
@@ -1773,8 +2121,10 @@ async function handleMessage(userId, incomingText, platform) {
 
   } else if (availableTires.length > 0 && hasDeliveryChoice && (selectedOption || Object.values(session.selectedTires || {}).some(Boolean))) {
     const posKey = getSelectionPositionKey(session);
-    const tire   = session.selectedTires?.[posKey] || session.selectedTires?.[DEFAULT_POSITION_KEY] || selectedOption?.tire;
-    const qty    = getRequestedQty(session, posKey);
+    const quoteSearch = session.searches.find(search => search.key === session.lastShownSearchKey)
+      || getLastSearch(session);
+    const tire   = (quoteSearch && session.selectedTiresBySearch?.[quoteSearch.key]) || selectedOption?.tire;
+    const qty    = getRequestedQty(session, posKey, quoteSearch?.key);
     const mount    = session.modalidad === 'monte';
     const valve    = /válvula|valvula|valve|stem/i.test(text);
     const disposal = /basura|disposal|dispos|llantas viejas|old tires/i.test(text);
