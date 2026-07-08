@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-07-08-single-session-greeting-v19';
+const BOT_VERSION = '2026-07-08-email-list-consent-v25';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -43,8 +43,8 @@ const FINANCE_OPTIONS = [
 const POSITION_KEYWORDS = {
   steer:          ['steer','direccion','dirección','delantera','adelante','front','steering','eje delantero','frontal','delantero','del frente','frente'],
   traction:       ['traction','traccion','tracción','drive','motriz','trasera','rear','eje trasero'],
-  trailer:        ['trailer','remolque','todas posiciones'],
-  'all position': ['all position','all-position','todas','multi','universal'],
+  trailer:        ['trailer','remolque'],
+  'all position': ['all position','all-position','todas posiciones','toda posición','multi','universal'],
 };
 
 // Map session position key → exact WooCommerce attribute value
@@ -168,8 +168,10 @@ async function logOrderToSheet({ name, company, address, phone, email, order, to
       requestBody: { values: [row] },
     });
     console.log(`[SHEET ORDER] ${name} | ${email} | ${total}`);
+    return true;
   } catch (e) {
     console.error('Order sheet log error:', e.message);
+    return false;
   }
 }
 
@@ -673,6 +675,46 @@ function getSelectionPositionKey(session) {
   return shownPos[shownPos.length - 1] || DEFAULT_POSITION_KEY;
 }
 
+function getNextUnselectedSearch(session) {
+  const seenPositions = new Set();
+  for (const search of session.searches || []) {
+    if (!search?.tires?.length) continue;
+    const posKey = search.position || DEFAULT_POSITION_KEY;
+    if (seenPositions.has(posKey)) continue;
+    seenPositions.add(posKey);
+    if (session.declinedPositions?.[posKey]) continue;
+    if (!session.selectedTires?.[posKey]) return search;
+  }
+  return null;
+}
+
+function extractDeclinedPositions(text) {
+  const declinePattern = /m[aá]s barat[oa]s?.*(?:otro lado|otra parte)|consegu[ií].*(?:otro lado|otra parte)|no (?:quiero|necesito|llevo|me llevo|voy a llevar|comprar[eé])|ya no|descart[oa]|skip|don't want|do not want|got .* cheaper elsewhere/i;
+  return String(text || '')
+    .split(/,|;|\bpero\b|\bas[ií] que\b|\bentonces\b|\bbut\b|\bso\b/i)
+    .filter(clause => declinePattern.test(clause))
+    .flatMap(clause => Object.entries(POSITION_KEYWORDS)
+      .filter(([, keywords]) => keywords.some(keyword => clause.toLowerCase().includes(keyword)))
+      .map(([position]) => position));
+}
+
+function pendingPositionSelectionReply(search, text='', session=null) {
+  const options = search.tires.map((tire, index) => formatInventoryOption(tire, index)).join('\n');
+  const labelsEs = {
+    steer: 'direccional/steer',
+    traction: 'tracción/traction',
+    trailer: 'trailer/remolque',
+    'all position': 'all position/toda posición',
+  };
+  const label = isEnglishMessage(text, session)
+    ? (POSITION_WC_VALUE[search.position] || search.position || 'this position')
+    : (labelsEs[search.position] || search.position || 'esta posición');
+  const question = isEnglishMessage(text, session)
+    ? `Which one do you prefer for ${label}?`
+    : `¿Cuál prefieres para ${label}?`;
+  return `${options}\n\n${question}`;
+}
+
 function wantsFinancing(text) {
   return /financiaci[oó]n|financiamiento|financiar|finance|financing|application|aplicaci[oó]n|aplicar|credito|cr[eé]dito|cuota inicial|inicial|dep[oó]sito|deposit|down payment|how much down/i.test(text);
 }
@@ -718,6 +760,23 @@ function wantsWholesale(text) {
 function advisorHandoffReply(text='', session=null) {
   if (isEnglishMessage(text, session)) return 'An advisor will assist you as soon as possible.';
   return 'Te atenderemos a la mayor brevedad posible.';
+}
+
+function completedOrderReply(modalidad, text='', session=null) {
+  const english = isEnglishMessage(text, session);
+  if (modalidad === 'monte') {
+    return english
+      ? 'Thank you. Your order has been recorded. You can bring your vehicle to *9710 NW 114 Way Bay#1, Medley FL 33178*, Mon-Fri 9am-5pm or Sat 9am-1pm. No appointment needed.'
+      : 'Gracias. Tu pedido quedó registrado. Puedes traer tu vehículo a *9710 NW 114 Way Bay#1, Medley FL 33178*, Lun-Vie 9am-5pm o Sáb 9am-1pm. Sin cita previa.';
+  }
+  if (modalidad === 'delivery') {
+    return english
+      ? 'Thank you. Your order has been recorded. We will notify you when it is out for delivery.'
+      : 'Gracias. Tu pedido quedó registrado. Te avisaremos cuando salga para entrega.';
+  }
+  return english
+    ? 'Thank you. Your order has been recorded. You can pick it up at *12301 NW 116th Ave, Suite 106, Medley FL 33178*, Mon-Fri 9am-5pm or Sat 9am-1pm.'
+    : 'Gracias. Tu pedido quedó registrado. Puedes recogerlo en *12301 NW 116th Ave, Suite 106, Medley FL 33178*, Lun-Vie 9am-5pm o Sáb 9am-1pm.';
 }
 
 function asksOutOfDeliveryZone(text) {
@@ -809,6 +868,7 @@ function getSession(id) {
       history:       [],
       tires:         [],
       selectedTires: {},
+      declinedPositions: {},
       size:          null,
       position:      null,
       pendingPositions: [],
@@ -904,21 +964,19 @@ MANEJO DE PREGUNTAS FUERA DEL FLUJO (crítico):
 
 PASO 4 — CONFIRMACIÓN Y DATOS DEL CLIENTE:
 - Después de mostrar cotización final → pregunta: "¿Confirmamos el pedido?"
-- Si el cliente confirma → solicita en UN SOLO mensaje los datos faltantes para la factura:
+- Si el cliente confirma → solicita los datos para la factura UNO POR UNO, en mensajes separados y en este orden:
   1. Nombre completo (siempre pedirlo — el nombre de WhatsApp puede ser apodo o empresa, no es confiable)
   2. Empresa (si aplica)
   3. Dirección completa (siempre necesaria para la factura, independientemente de si es pickup, delivery o monte)
   4. Teléfono — ya lo tienes en [CUSTOMER PHONE], no lo pidas
   5. Correo electrónico
-- Pide los 4 datos faltantes (nombre, empresa, dirección, email) en un solo mensaje.
-- Cuando el cliente confirme sus datos (nombre, dirección, email): muestra el resumen del pedido con los datos, agrega frase de agradecimiento y pregunta sobre promociones semanales. NO vuelvas a preguntar '¿Confirmamos el pedido?' — eso ya se hizo antes.
-- Al confirmar la suscripción a promociones (o si declina): cierra con una frase según la modalidad:
+- Nunca intentes interpretar un bloque desordenado con todos los datos. Pregunta y guarda un solo campo por turno.
+- Después de recibir el correo, pregunta si quiere inscribirse en la lista de correos para recibir información sobre promociones. Cuando responda sí o no, el sistema registra el pedido y esa preferencia en Google Sheets; después agradece y cierra según la modalidad. NO vuelvas a preguntar "¿Confirmamos el pedido?".
+- Cierra con una frase según la modalidad:
   - Pickup → "Puedes pasar a recoger tu pedido en *12301 NW 116th Ave, Suite 106, Medley FL 33178* en horario Lun–Vie 9am–5pm | Sáb 9am–1pm."
   - Delivery → "Tu pedido será entregado en la dirección indicada. Te avisamos cuando salga."
   - Monte → "Puedes traer tu vehículo a *9710 NW 114 Way Bay#1, Medley FL 33178* en horario Lun–Vie 9am–5pm | Sáb 9am–1pm. Sin cita previa."
 - NUNCA digas "te contactaremos" ni "nos comunicaremos contigo".
-- Si el cliente acepta recibir promociones → confirma con un mensaje corto. El sistema lo registrará automáticamente.
-- Si el cliente declina → acepta sin insistir.
 
 PASO 5 — OFERTA DE EMAIL (solo si [OFFER_EMAIL]):
 - Después de mostrar cotización o resultados, si ves [OFFER_EMAIL] → invita al cliente a registrar su email para recibir la *Llanta de la Semana* con precios especiales. Hazlo de forma breve y no invasiva. Si dice que no → acepta y continúa normalmente.
@@ -947,6 +1005,8 @@ ESTILO:
 - Cuando el cliente responda con un número después de ver una lista de opciones, interpreta ese número como la SELECCIÓN de esa opción (ej: responde "2" → elige la opción #2 de la lista), NO como cantidad. La cantidad ya se conoce del mensaje inicial.
 - Si hay varias posiciones pendientes: muestra las opciones de una posición → espera que el cliente elija → confirma su elección → ENTONCES muestra las opciones de la siguiente posición. NO asumas ninguna selección que el cliente no haya hecho explícitamente.
 - Si una posición tiene varias opciones (ej: 2 Firestone diferentes), el cliente DEBE elegir cuál antes de continuar. No tomes la primera por defecto.
+- Steer, traction, trailer y all position son posiciones independientes. Antes de pedir modalidad, cotizar o confirmar, debe existir una selección propia para CADA posición consultada. "All position" NUNCA significa trailer.
+- Si el cliente descarta una posición (por ejemplo, consiguió las steer más baratas en otro lugar), márcala como descartada: no vuelvas a pedir una elección para esa posición y no la incluyas en la cotización. Continúa únicamente con las posiciones que sí comprará.
 
 IMPORTANTE: Los tags [INVENTORY DATA:], [QUOTE:], [CUSTOMER NAME:], etc. son instrucciones internas — NUNCA los copies literalmente en tu respuesta al cliente. Usa su contenido para formular tu respuesta.
 CRÍTICO — COTIZACIONES: El tag [QUOTE:] contiene la cotización oficial calculada por el sistema.
@@ -991,8 +1051,17 @@ async function handleMessage(userId, incomingText, platform) {
   }
   if (!session.current.tires) session.current.tires = [];
   if (!session.selectedTires) session.selectedTires = {};
+  if (!session.declinedPositions) session.declinedPositions = {};
   if (!session.searches) session.searches = [];
   ensureQuantityState(session);
+
+  const declinedNow = extractDeclinedPositions(text);
+  declinedNow.forEach(position => {
+    session.declinedPositions[position] = true;
+    delete session.selectedTires[position];
+    console.log(`[POSITION DECLINED] ${position}`);
+  });
+  const isPositionDeclineMessage = declinedNow.length > 0;
 
   // WhatsApp: phone is the userId directly
   if (isWA && !session.phone) session.phone = userId;
@@ -1077,6 +1146,21 @@ async function handleMessage(userId, incomingText, platform) {
     }
   }
 
+  const confirmsOrder = /^(?:s[ií]|yes|confirmo|confirmamos|correcto|de acuerdo|ok|okay|dale)[.! ]*$/i.test(text);
+  if (session.awaitingOrderConfirmation && confirmsOrder) {
+    session.awaitingOrderConfirmation = false;
+    session.awaitingInvoiceData = true;
+    session.invoiceData = {};
+    session.invoiceField = 'name';
+    const reply = isEnglishMessage(text, session)
+      ? 'What is the full name for the invoice?'
+      : '¿Cuál es el nombre completo para la factura?';
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
+  }
+
   // Name comes from WhatsApp contact — no need to ask
 
   // ── Capture phone (non-WA) ───────────────────────────────────────────────
@@ -1098,54 +1182,114 @@ async function handleMessage(userId, incomingText, platform) {
     }
   }
 
-  // ── Capture order confirmation data (name + email in same msg) ─────────────
-  const emailInText = extractEmail(text);
-  if (!session.pendingOrder && emailInText && text.length < 200) {
+  // ── Capture invoice data one field at a time ──────────────────────────────
+  if (session.awaitingInvoiceData) {
+    const english = isEnglishMessage(text, session);
+    session.invoiceData = session.invoiceData || {};
+
+    if (session.invoiceField === 'name') {
+      session.invoiceData.name = text;
+      session.name = text;
+      session.invoiceField = 'company';
+      const reply = english ? 'What is the company name? Reply "none" if it does not apply.' : '¿Cuál es el nombre de la empresa? Responde "no" si no aplica.';
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+
+    if (session.invoiceField === 'company') {
+      session.invoiceData.company = /^(?:no|ninguna|no aplica|n\/?a|none|not applicable)$/i.test(text) ? '' : text;
+      session.invoiceField = 'address';
+      const reply = english ? 'What is the full billing address?' : '¿Cuál es la dirección completa para la factura?';
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+
+    if (session.invoiceField === 'address') {
+      session.invoiceData.address = text;
+      session.invoiceField = 'email';
+      const reply = english ? 'What is the email address?' : '¿Cuál es el correo electrónico?';
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+
+    const emailInText = extractEmail(text);
+    if (!emailInText) {
+      const reply = english ? 'Please send a valid email address.' : 'Envíame un correo electrónico válido.';
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+    session.invoiceData.email = emailInText;
+    session.email = emailInText;
     session.orderEmail = emailInText;
 
-    // Extract full name from first item in confirmation message
-    const textParts = text.split(/[\n,]/).map(p => p.trim()).filter(Boolean);
-    const namePart  = textParts.find(p => !/@/.test(p) && p.length > 2 && !/calle|ave|blvd|street|\d{5}/i.test(p)) || session.name;
-    const addrPart  = (textParts.find(p => /calle|ave|blvd|street|drive|court|way|\d{3,}/i.test(p)) || '').replace(/\S+@\S+/g, '').trim();
-    const compPart  = textParts.find(p => /llc|inc|corp|company|empresa|group|s\.a\.|trucking|independiente/i.test(p)) || '';
-
-    // Use confirmed snapshot captured at quote generation time
     const orderLines  = session.confirmedOrderLines || 'ver cotización';
     const orderModal  = session.confirmedModalidad  || session.modalidad || 'pendiente';
     const orderTotal  = session.lastQuoteTotal
       ? '$' + parseFloat(session.lastQuoteTotal).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})
       : '';
 
-    if (namePart && namePart.length > 1) session.name = namePart;
-
     session.pendingOrder = {
-      name:      namePart,
-      company:   compPart,
-      address:   addrPart,
+      name:      session.invoiceData.name,
+      company:   session.invoiceData.company,
+      address:   session.invoiceData.address,
       phone:     session.phone || userId,
       email:     emailInText,
       order:     orderLines,
       total:     orderTotal,
       modalidad: orderModal,
     };
-    session.logged = true;
-    console.log(`[ORDER CONFIRMED] name=${namePart} order=${orderLines} total=${orderTotal} modalidad=${orderModal}`);
+    session.awaitingInvoiceData = false;
+    session.invoiceField = null;
+    console.log(`[ORDER CONFIRMED] name=${session.invoiceData.name} order=${orderLines} total=${orderTotal} modalidad=${orderModal}`);
+
+    session.awaitingPromoAnswer = true;
+    const reply = english
+      ? 'Would you like to join our email list to receive information about promotions?'
+      : '¿Quieres inscribirte en nuestra lista de correos para recibir información sobre promociones?';
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
   }
 
   // ── Detect promo subscription consent ────────────────────────────────────
   const acceptedPromo = /\bsi\b|\byes\b|claro|dale|por supuesto|me apunto|suscrib|quiero|\bok\b|bueno/i.test(text);
   const declinedPromo = /\bno\b|no gracias|paso/i.test(text);
-  if (session.logged && session.pendingOrder && !session.promoAnswered) {
+  if (session.awaitingPromoAnswer && session.pendingOrder && !session.promoAnswered) {
     if (acceptedPromo || declinedPromo) {
-      session.promoAnswered = true;
       const promoVal = acceptedPromo ? 'si' : 'no';
-      // Write order to sheet now that we have promo answer
-      logOrderToSheet({
+      const saved = await logOrderToSheet({
         ...session.pendingOrder,
         promo: promoVal,
-      }).catch(() => {});
+      });
+      if (!saved) {
+        const reply = isEnglishMessage(text, session)
+          ? 'I could not save the order information. Please try again shortly.'
+          : 'No pude guardar los datos del pedido. Por favor, inténtalo nuevamente en unos minutos.';
+        session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+        if (session.history.length > 6) session.history = session.history.slice(-6);
+        return reply;
+      }
+      session.awaitingPromoAnswer = false;
+      session.promoAnswered = true;
+      session.logged = true;
+      session.orderCompleted = true;
       console.log(`[SHEET WRITE] ${session.pendingOrder.name} | promo=${promoVal}`);
+      const reply = completedOrderReply(session.pendingOrder.modalidad, text, session);
+      session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
     }
+    const reply = isEnglishMessage(text, session)
+      ? 'Please answer yes or no. Would you like to join our email list for promotions?'
+      : 'Responde sí o no. ¿Quieres inscribirte en nuestra lista de correos para recibir promociones?';
+    session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
   }
 
   // ── Detect delivery modalidad ────────────────────────────────────────────
@@ -1173,6 +1317,7 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   if (newSize) {
+    session.awaitingOrderConfirmation = false;
     if (session.current.size && newSize !== session.current.size) {
       session.current.origin = null;
     }
@@ -1212,6 +1357,7 @@ async function handleMessage(userId, incomingText, platform) {
 
   const pos = explicitPos;
   if (pos) {
+    if (!isPositionDeclineMessage) delete session.declinedPositions[pos];
     session.current.position = pos;
     const allPositions = [];
     for (const [key, kws] of Object.entries(POSITION_KEYWORDS)) {
@@ -1222,8 +1368,6 @@ async function handleMessage(userId, incomingText, platform) {
       session.current.pendingPositions = allPositions.slice(1);
     }
   }
-  if (/all.?position|todas.?posicion/i.test(text)) session.current.position = 'trailer';
-
   if (pos && !newSize && !session.current.size) {
     const reply = withInitialAssistantIntro(askSizeForPositionReply(pos, text, session), text, isFirstInteraction, session);
     session.awaitingSizeForPosition = true;
@@ -1278,7 +1422,7 @@ async function handleMessage(userId, incomingText, platform) {
       POSITION_KEYWORDS[k]?.some(kw => text.toLowerCase().includes(kw))
     );
 
-  if (session.current.size && session.current.size.length > 3 && hasNewSearchTrigger) {
+  if (session.current.size && session.current.size.length > 3 && hasNewSearchTrigger && !isPositionDeclineMessage) {
     try {
       await fetchAllInventory();
       if (!session.current.searchCount) session.current.searchCount = 0;
@@ -1441,8 +1585,28 @@ async function handleMessage(userId, incomingText, platform) {
   const selectedOption = inputConsumedAsQuantity ? null : findSelection(text, _availForSelection);
   if (selectedOption) {
     const posKey = getSelectionPositionKey(session);
+    session.awaitingOrderConfirmation = false;
     session.selectedTires[posKey] = selectedOption.tire;
     console.log(`[SELECTION] posKey=${posKey} tire=${selectedOption.tire.brand} idx=${selectedOption.idx} kind=${selectedOption.kind}`);
+
+    let pendingSearch = getNextUnselectedSearch(session);
+    while (pendingSearch?.tires?.length === 1) {
+      const pendingPosKey = pendingSearch.position || DEFAULT_POSITION_KEY;
+      session.selectedTires[pendingPosKey] = pendingSearch.tires[0];
+      console.log(`[AUTO SELECTION] posKey=${pendingPosKey} tire=${pendingSearch.tires[0].brand}`);
+      pendingSearch = getNextUnselectedSearch(session);
+    }
+    if (pendingSearch) {
+      session.current.tires = pendingSearch.tires;
+      session.current.position = pendingSearch.position;
+      session.current.shownPositions = [pendingSearch.position || DEFAULT_POSITION_KEY];
+      session.lastShownPositions = [...session.current.shownPositions];
+      const reply = pendingPositionSelectionReply(pendingSearch, text, session);
+      session.history.push({ role: 'user', content: text });
+      session.history.push({ role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
   }
 
   const asksCashOrCardPrice = /\b(?:cash|efectivo|contado|tarjeta|credit card)\b/i.test(text)
@@ -1462,8 +1626,73 @@ async function handleMessage(userId, incomingText, platform) {
     return reply;
   }
 
+  if (!selectedOption) {
+    const pendingSearch = getNextUnselectedSearch(session);
+    if (pendingSearch) {
+      session.current.tires = pendingSearch.tires;
+      session.current.position = pendingSearch.position;
+      session.current.shownPositions = [pendingSearch.position || DEFAULT_POSITION_KEY];
+      session.lastShownPositions = [...session.current.shownPositions];
+      const reply = pendingPositionSelectionReply(pendingSearch, text, session);
+      session.history.push({ role: 'user', content: text });
+      session.history.push({ role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+  }
+  if (isPositionDeclineMessage
+      && Object.values(session.selectedTires || {}).some(Boolean)
+      && !session.modalidad
+      && !session.confirmedModalidad) {
+    const reply = isEnglishMessage(text, session)
+      ? 'Will you mount with us (-$5/tire), use free delivery in the Miami area, or pick them up?'
+      : '¿Montas con nosotros (-$5/llanta), prefieres delivery gratis en el área de Miami o pasas a recogerlas?';
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
+  }
+
+  if (selectedOption) {
+    const posKey = getSelectionPositionKey(session);
+    const hasRequestedQty = !!(
+      session.requestedQtyByPosition?.[posKey]
+      || session.requestedQtyByPosition?.[DEFAULT_POSITION_KEY]
+    );
+    if (!hasRequestedQty) {
+      session.awaitingQuantity = true;
+      const reply = inventoryQuantityQuestion(text, session);
+      session.history.push({ role: 'user', content: text });
+      session.history.push({ role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+    if (!session.modalidad && !session.confirmedModalidad) {
+      const reply = isEnglishMessage(text, session)
+        ? 'Will you mount with us (-$5/tire), use free delivery in the Miami area, or pick them up?'
+        : '¿Montas con nosotros (-$5/llanta), prefieres delivery gratis en el área de Miami o pasas a recogerlas?';
+      session.history.push({ role: 'user', content: text });
+      session.history.push({ role: 'assistant', content: reply });
+      if (session.history.length > 6) session.history = session.history.slice(-6);
+      return reply;
+    }
+  }
+  if (inputConsumedAsQuantity
+      && Object.values(session.selectedTires || {}).some(Boolean)
+      && !session.modalidad
+      && !session.confirmedModalidad) {
+    const reply = isEnglishMessage(text, session)
+      ? 'Will you mount with us (-$5/tire), use free delivery in the Miami area, or pick them up?'
+      : '¿Montas con nosotros (-$5/llanta), prefieres delivery gratis en el área de Miami o pasas a recogerlas?';
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
+  }
+
   // ── Build quote ───────────────────────────────────────────────────────────
   let quoteContext = '';
+  let directQuoteReply = '';
   const wantsQuote = /cuanto|precio|total|costo|quote|how much|desglose|calcul|cotiz/i.test(text);
 
   const lastSearch = getLastSearch(session);
@@ -1475,14 +1704,14 @@ async function handleMessage(userId, incomingText, platform) {
   const wantsFullQuote = !isConfirmationMsg && (hasDeliveryChoice 
     || /cotiz|total|cuanto|precio|quote|how much|desglose|\bmonte\b|\bmontar\b|delivery|recoger|pickup|paso a|llevarme|envio|envío/i.test(text));
   console.log(`[QUOTE CHECK] wantsFullQuote=${wantsFullQuote} searches=${session.searches?.length} hasDelivery=${hasDeliveryChoice} isConfirm=${isConfirmationMsg} logged=${session.logged}`);
-  const selectedSearches = (session.searches || []).filter(s => {
+  const resolvedSearches = (session.searches || []).filter(s => {
     const posKey = s.position || DEFAULT_POSITION_KEY;
-    return !!(session.selectedTires?.[posKey] || session.selectedTires?.[DEFAULT_POSITION_KEY]);
+    return !!session.selectedTires?.[posKey] || !!session.declinedPositions?.[posKey];
   });
-  const allSearchesSelected = session.searches?.length > 0
-    && selectedSearches.length === session.searches.length;
+  const allSearchesResolved = session.searches?.length > 0
+    && resolvedSearches.length === session.searches.length;
 
-  if (wantsFullQuote && session.searches && session.searches.length > 1 && allSearchesSelected) {
+  if (wantsFullQuote && session.searches && session.searches.length > 1 && allSearchesResolved) {
     const combinedLines = ['*COTIZACION COMPLETA*'];
     let grandTotal = 0;
     const mount    = session.modalidad === 'monte';
@@ -1497,7 +1726,7 @@ async function handleMessage(userId, incomingText, platform) {
       if (seenKeys.has(dedupeKey)) return;
       seenKeys.add(dedupeKey);
       const posKey = s.position || 'default';
-      const tire   = session.selectedTires?.[posKey] || session.selectedTires?.[DEFAULT_POSITION_KEY];
+      const tire   = session.selectedTires?.[posKey];
       if (!tire) return;
       console.log(`[COMBINED TIRE] pos=${posKey} selected=${session.selectedTires?.[posKey]?.brand} default=${session.selectedTires?.['default']?.brand} using=${tire.brand}`);
       const qty    = getRequestedQty(session, posKey);
@@ -1530,7 +1759,7 @@ async function handleMessage(userId, incomingText, platform) {
     session.confirmedOrderLines = Array.from(seenKeys).map(posKey => {
       const s = session.searches.find(s => (s.position || 'default') === posKey);
       if (!s || !s.tires?.length) return null;
-      const tire = session.selectedTires?.[posKey] || session.selectedTires?.[DEFAULT_POSITION_KEY];
+      const tire = session.selectedTires?.[posKey];
       if (!tire) return null;
       const qty  = getRequestedQty(session, posKey);
       return `${qty}x ${tire.brand} ${tire.size}${s.position ? ' ' + s.position : ''}`;
@@ -1540,10 +1769,11 @@ async function handleMessage(userId, incomingText, platform) {
     const quoteText = combinedLines.join('\n');
     session.lastCombinedQuote = quoteText; // cache for re-injection
     quoteContext = '\n\n[QUOTE — presenta esta cotización al cliente y pregunta si confirma:\n' + quoteText + ']';
+    directQuoteReply = `${quoteText}\n\n${isEnglishMessage(text, session) ? 'Do you confirm the order?' : '¿Confirmamos el pedido?'}`;
 
-  } else if (availableTires.length > 0 && selectedOption) {
+  } else if (availableTires.length > 0 && hasDeliveryChoice && (selectedOption || Object.values(session.selectedTires || {}).some(Boolean))) {
     const posKey = getSelectionPositionKey(session);
-    const tire   = session.selectedTires?.[posKey] || selectedOption.tire;
+    const tire   = session.selectedTires?.[posKey] || session.selectedTires?.[DEFAULT_POSITION_KEY] || selectedOption?.tire;
     const qty    = getRequestedQty(session, posKey);
     const mount    = session.modalidad === 'monte';
     const valve    = /válvula|valvula|valve|stem/i.test(text);
@@ -1554,13 +1784,25 @@ async function handleMessage(userId, incomingText, platform) {
       const totalMatch = quoteStr.match(/TOTAL: \$([\d.]+)/);
       if (totalMatch) session.lastQuoteTotal = totalMatch[1];
       quoteContext = `\n\n[QUOTE:\n${quoteStr}]`;
+      session.confirmedOrderLines = `${qty}x ${tire.brand} ${tire.size}`;
+      session.confirmedModalidad = session.modalidad;
+      directQuoteReply = `${quoteStr}\n\n${isEnglishMessage(text, session) ? 'Do you confirm the order?' : '¿Confirmamos el pedido?'}`;
     }
   }
 
   // Re-inject cached quote if delivery known, no new quote generated, and order not yet confirmed
-  if (!quoteContext && allSearchesSelected && (session.confirmedModalidad || session.modalidad) && session.lastCombinedQuote && !session.logged && !session.promoAnswered && !isConfirmationMsg) {
+  if (!quoteContext && allSearchesResolved && (session.confirmedModalidad || session.modalidad) && session.lastCombinedQuote && !session.logged && !session.promoAnswered && !isConfirmationMsg) {
     quoteContext = '\n\n[QUOTE:\n' + session.lastCombinedQuote + ']';
+    directQuoteReply = `${session.lastCombinedQuote}\n\n${isEnglishMessage(text, session) ? 'Do you confirm the order?' : '¿Confirmamos el pedido?'}`;
     console.log('[QUOTE REINJECTED]');
+  }
+
+  if (directQuoteReply) {
+    session.awaitingOrderConfirmation = true;
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: directQuoteReply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    return directQuoteReply;
   }
 
   // ── Email offer ───────────────────────────────────────────────────────────
