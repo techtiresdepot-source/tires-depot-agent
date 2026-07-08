@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-07-08-spanish-default-language-v16';
+const BOT_VERSION = '2026-07-08-single-session-greeting-v19';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -766,7 +766,13 @@ function initialGreetingReply(text='', session=null) {
 }
 
 function withInitialAssistantIntro(reply, text='', isFirstInteraction=false, session=null) {
-  if (!isFirstInteraction || /asistente virtual|virtual assistant/i.test(reply)) return reply;
+  if (!isFirstInteraction) {
+    return String(reply || '')
+      .replace(/^\s*(?:¡?\s*hola|buen(?:os|as)\s+(?:d[ií]as|tardes|noches)|hi|hello)[!,.:\s-]*/i, '')
+      .replace(/^\s*(?:soy\s+el\s+asistente\s+virtual\s+de\s+Tires\s+Depot|i(?:'m| am)\s+the\s+Tires\s+Depot\s+virtual\s+assistant)[.!,:;\s-]*/i, '')
+      .trim();
+  }
+  if (/asistente virtual|virtual assistant/i.test(reply)) return reply;
   const intro = isEnglishMessage(text, session)
     ? "Hi! I'm the Tires Depot virtual assistant."
     : '¡Hola! Soy el asistente virtual de Tires Depot.';
@@ -813,6 +819,7 @@ function getSession(id) {
       phone:         null,
       email:         null,
       language:      null,
+      hasIntroduced: false,
       step:          'greeting',
       logged:        false,
       emailOffered:  false,
@@ -863,6 +870,7 @@ PASO 1 — SALUDO (SIEMPRE PRIMERO):
 - Si el cliente solo saluda, el PRIMER mensaje debe aclarar que eres un bot/asistente virtual de Tires Depot, dar una bienvenida breve y preguntar de forma general cómo puedes ayudar. Si el cliente escribe en español: "¡Hola! Soy el asistente virtual de Tires Depot. ¿Cómo puedo ayudarte?" Si escribe en inglés: "Hi! I'm the Tires Depot virtual assistant. How can I help you?" NO pidas el nombre — se obtiene automáticamente del contacto de WhatsApp.
 - Si el primer mensaje ya trae intención concreta de llantas pero falta la medida, saluda como asistente virtual y pregunta la medida necesaria.
 - Si el primer mensaje trae saludo + medida, saludo + posición, o saludo + medida + posición, ignora el saludo para clasificar la intención y procesa el resto con las mismas reglas: solo medida → busca medida; medida + posición → busca ambas; solo posición → pregunta medida.
+- Saluda e identifícate SOLAMENTE en la primera respuesta de la sesión. En todas las respuestas posteriores ve directo al asunto, aunque el cliente salude otra vez o pregunte por precio, pago, inventario, financiación o cualquier otro tema.
 - Si la sesión se reinició o no tienes historial interno, NO asumas contexto de mensajes anteriores visibles en WhatsApp. Trata el mensaje como conversación nueva y saluda como asistente virtual. Si el mensaje incluye posición/cantidad pero no medida, pregunta la medida para esa posición.
 
 PASO 2 — TELÉFONO (solo si [NEEDS_PHONE]):
@@ -961,7 +969,11 @@ async function handleMessage(userId, incomingText, platform) {
   const session  = getSession(userId);
   const text     = incomingText.trim();
   const isWA     = platform === 'whatsapp';
-  const isFirstInteraction = session.history.length === 0;
+  if (typeof session.hasIntroduced !== 'boolean') {
+    session.hasIntroduced = session.history.length > 0;
+  }
+  const isFirstInteraction = !session.hasIntroduced;
+  session.hasIntroduced = true;
   if (!session.language) session.language = initialLanguageFromText(text);
 
   // Migrate old session structure if needed
@@ -1063,41 +1075,6 @@ async function handleMessage(userId, incomingText, platform) {
       console.log(`[REPEAT INVENTORY EXACT ${BOT_VERSION}] phone=${session.phone || userId}`);
       return reply;
     }
-  }
-
-  // Auto-reset if history is too old or client starts fresh
-  const looksLikeNewInquiry = /\d{2,3}[\d\/R.]+|cuánto|precio|necesito|busco|tienen/i.test(text);
-  if (looksLikeNewInquiry && session.history.length >= 6) {
-    const savedName  = session.name;
-    const savedPhone = session.phone;
-    const savedEmail = session.email;
-    const savedLanguage = session.language || initialLanguageFromText(text);
-    const savedSearches            = session.searches                      || [];
-    const savedSelectedTires       = session.selectedTires                 || {};
-    const savedRequestedQty        = session.requestedQtyByPosition        || {};
-    const savedLastQuoteTotal      = session.lastQuoteTotal                || null;
-    const savedModalidad           = session.modalidad                     || null;
-    const savedConfirmedOrderLines = session.confirmedOrderLines           || null;
-    const savedConfirmedModalidad  = session.confirmedModalidad            || null;
-    const savedShownPositions      = session.current?.shownPositions       || [];
-    const savedLastCombinedQuote   = session.lastCombinedQuote             || null;
-    sessions.set(userId, {
-      history: [], tires: [], size: null, position: null,
-      pendingPositions: [], shownPositions: [],
-      origin: null, brand: null,
-      name: savedName, phone: savedPhone, email: savedEmail, language: savedLanguage,
-      step: 'searching', logged: false, emailOffered: false, pendingOrder: null, promoAnswered: false,
-      searches:            savedSearches,
-      selectedTires:       savedSelectedTires,
-      requestedQtyByPosition: savedRequestedQty,
-      lastQuoteTotal:      savedLastQuoteTotal,
-      modalidad:           savedModalidad,
-      confirmedOrderLines: savedConfirmedOrderLines,
-      confirmedModalidad:  savedConfirmedModalidad,
-      lastCombinedQuote:   savedLastCombinedQuote,
-      lastShownPositions:  savedShownPositions,
-    });
-    return handleMessage(userId, text, platform);
   }
 
   // Name comes from WhatsApp contact — no need to ask
@@ -1468,6 +1445,23 @@ async function handleMessage(userId, incomingText, platform) {
     console.log(`[SELECTION] posKey=${posKey} tire=${selectedOption.tire.brand} idx=${selectedOption.idx} kind=${selectedOption.kind}`);
   }
 
+  const asksCashOrCardPrice = /\b(?:cash|efectivo|contado|tarjeta|credit card)\b/i.test(text)
+    && /\b(?:precio|costo|descuento|cambia|mismo|recargo|price|discount|different|change|fee)\b/i.test(text);
+  if (asksCashOrCardPrice) {
+    const hasSelectedTire = Object.values(session.selectedTires || {}).some(Boolean);
+    const baseReply = isEnglishMessage(text, session)
+      ? 'The tire price is the same when paying cash or by card. Credit-card payments have a 3% surcharge; cash has no additional discount.'
+      : 'El precio de la llanta es el mismo pagando en efectivo o con tarjeta. Los pagos con tarjeta de crédito tienen un recargo del 3%; en efectivo no hay descuento adicional.';
+    const selectionQuestion = isEnglishMessage(text, session)
+      ? 'Which tire option do you prefer?'
+      : '¿Cuál opción de llanta prefieres?';
+    const reply = hasSelectedTire ? baseReply : `${baseReply}\n\n${selectionQuestion}`;
+    session.history.push({ role: 'user', content: text });
+    session.history.push({ role: 'assistant', content: reply });
+    if (session.history.length > 6) session.history = session.history.slice(-6);
+    return reply;
+  }
+
   // ── Build quote ───────────────────────────────────────────────────────────
   let quoteContext = '';
   const wantsQuote = /cuanto|precio|total|costo|quote|how much|desglose|calcul|cotiz/i.test(text);
@@ -1481,7 +1475,14 @@ async function handleMessage(userId, incomingText, platform) {
   const wantsFullQuote = !isConfirmationMsg && (hasDeliveryChoice 
     || /cotiz|total|cuanto|precio|quote|how much|desglose|\bmonte\b|\bmontar\b|delivery|recoger|pickup|paso a|llevarme|envio|envío/i.test(text));
   console.log(`[QUOTE CHECK] wantsFullQuote=${wantsFullQuote} searches=${session.searches?.length} hasDelivery=${hasDeliveryChoice} isConfirm=${isConfirmationMsg} logged=${session.logged}`);
-  if (wantsFullQuote && session.searches && session.searches.length > 1) {
+  const selectedSearches = (session.searches || []).filter(s => {
+    const posKey = s.position || DEFAULT_POSITION_KEY;
+    return !!(session.selectedTires?.[posKey] || session.selectedTires?.[DEFAULT_POSITION_KEY]);
+  });
+  const allSearchesSelected = session.searches?.length > 0
+    && selectedSearches.length === session.searches.length;
+
+  if (wantsFullQuote && session.searches && session.searches.length > 1 && allSearchesSelected) {
     const combinedLines = ['*COTIZACION COMPLETA*'];
     let grandTotal = 0;
     const mount    = session.modalidad === 'monte';
@@ -1496,7 +1497,8 @@ async function handleMessage(userId, incomingText, platform) {
       if (seenKeys.has(dedupeKey)) return;
       seenKeys.add(dedupeKey);
       const posKey = s.position || 'default';
-      const tire   = session.selectedTires?.[posKey] || session.selectedTires?.['default'] || s.tires[0];
+      const tire   = session.selectedTires?.[posKey] || session.selectedTires?.[DEFAULT_POSITION_KEY];
+      if (!tire) return;
       console.log(`[COMBINED TIRE] pos=${posKey} selected=${session.selectedTires?.[posKey]?.brand} default=${session.selectedTires?.['default']?.brand} using=${tire.brand}`);
       const qty    = getRequestedQty(session, posKey);
       const c = calcTotal(tire, qty, mount, valve, disposal);
@@ -1528,7 +1530,8 @@ async function handleMessage(userId, incomingText, platform) {
     session.confirmedOrderLines = Array.from(seenKeys).map(posKey => {
       const s = session.searches.find(s => (s.position || 'default') === posKey);
       if (!s || !s.tires?.length) return null;
-      const tire = session.selectedTires?.[posKey] || s.tires[0];
+      const tire = session.selectedTires?.[posKey] || session.selectedTires?.[DEFAULT_POSITION_KEY];
+      if (!tire) return null;
       const qty  = getRequestedQty(session, posKey);
       return `${qty}x ${tire.brand} ${tire.size}${s.position ? ' ' + s.position : ''}`;
     }).filter(Boolean).join(' | ');
@@ -1538,9 +1541,9 @@ async function handleMessage(userId, incomingText, platform) {
     session.lastCombinedQuote = quoteText; // cache for re-injection
     quoteContext = '\n\n[QUOTE — presenta esta cotización al cliente y pregunta si confirma:\n' + quoteText + ']';
 
-  } else if (availableTires.length > 0 && (generalQty || wantsQuote || selectedOption)) {
+  } else if (availableTires.length > 0 && selectedOption) {
     const posKey = getSelectionPositionKey(session);
-    const tire   = session.selectedTires?.[posKey] || selectedOption?.tire || availableTires[0];
+    const tire   = session.selectedTires?.[posKey] || selectedOption.tire;
     const qty    = getRequestedQty(session, posKey);
     const mount    = session.modalidad === 'monte';
     const valve    = /válvula|valvula|valve|stem/i.test(text);
@@ -1555,7 +1558,7 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   // Re-inject cached quote if delivery known, no new quote generated, and order not yet confirmed
-  if (!quoteContext && (session.confirmedModalidad || session.modalidad) && session.lastCombinedQuote && !session.logged && !session.promoAnswered && !isConfirmationMsg) {
+  if (!quoteContext && allSearchesSelected && (session.confirmedModalidad || session.modalidad) && session.lastCombinedQuote && !session.logged && !session.promoAnswered && !isConfirmationMsg) {
     quoteContext = '\n\n[QUOTE:\n' + session.lastCombinedQuote + ']';
     console.log('[QUOTE REINJECTED]');
   }
