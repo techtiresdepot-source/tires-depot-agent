@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-07-09-ai-radial-position-v39';
+const BOT_VERSION = '2026-07-09-ai-radial-position-typos-v40';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -940,7 +940,7 @@ async function classifyPositionReply(text, language='es') {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 60,
       temperature: 0,
-      system: 'Classify the requested tire position. Return JSON only: {"position":"steer|traction|trailer|all position|unclear"}. In Spanish, "direccional", "delantera", "del frente" and similar mean steer. "tracción", "trasera", "drive" and similar mean traction. "remolque" means trailer. "toda posición", "all position" and similar mean all position. Do not infer a position from quantity, size, brand, or the word radial/radiales.',
+      system: 'Classify the requested tire position. Return JSON only: {"position":"steer|traction|trailer|all position|unclear"}. Understand Spanish/English and tolerate minor spelling mistakes or missing accents. In Spanish, words intended as direccional/delantera/del frente mean steer, even if misspelled. Words intended as tracción/trasera/drive mean traction. Words intended as remolque/trailer mean trailer. Words intended as toda posición/all position mean all position. Do not infer a position from quantity, size, brand, or the word radial/radiales.',
       messages: [{
         role: 'user',
         content: `Language: ${language}\nCustomer reply: ${rawText}`,
