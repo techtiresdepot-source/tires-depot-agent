@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-07-08-robust-ai-decline-v36';
+const BOT_VERSION = '2026-07-08-ai-cart-intents-v38';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -829,20 +829,71 @@ function cartSummary(session, text='') {
   ].join('\n');
 }
 
-function removeCartLine(session, text='') {
+function removeCartLine(session, command={}) {
   const lines = (session.cartLines || []).filter(line => line.tire && line.qty);
-  const indexMatch = text.match(/(?:quita|quitar|elimina|eliminar|saca|sacar|remove|delete)\s+(?:la\s+|el\s+|opci[oó]n\s+|#)?([1-9][0-9]?)/i);
-  let target = indexMatch ? lines[Number(indexMatch[1]) - 1] : null;
+  const normalizedTarget = normalizeProductText(command.target || '');
+  if (command.targetType === 'position' && normalizedTarget) {
+    const keys = new Set(lines
+      .filter(line => normalizeProductText(line.position) === normalizedTarget)
+      .map(line => line.key));
+    if (keys.size) {
+      session.cartLines = session.cartLines.filter(line => !keys.has(line.key));
+      return true;
+    }
+  }
+  let target = command.targetIndex ? lines[Number(command.targetIndex) - 1] : null;
   if (!target) {
-    const lower = text.toLowerCase();
-    target = lines.find(line =>
-      (line.tire.brand && lower.includes(line.tire.brand.toLowerCase()))
-      || (line.tire.name && lower.includes(line.tire.name.toLowerCase()))
-    );
+    const lower = normalizedTarget;
+    if (lower) {
+      target = lines.find(line =>
+        (line.tire.brand && lower.includes(normalizeProductText(line.tire.brand)))
+        || (line.tire.name && normalizeProductText(line.tire.name).includes(lower))
+        || (line.position && lower.includes(normalizeProductText(line.position)))
+      );
+    }
   }
   if (!target) return false;
   session.cartLines = session.cartLines.filter(line => line.key !== target.key);
   return true;
+}
+
+async function classifyCartReply(text, state, session) {
+  try {
+    const cart = (session.cartLines || [])
+      .filter(line => line.tire && line.qty)
+      .map((line, index) => ({
+        index: index + 1,
+        quantity: line.qty,
+        product: line.tire.name,
+        position: line.position,
+      }));
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 100,
+      temperature: 0,
+      system: 'Classify the customer response in a shopping-cart flow. Return JSON only with: {"action":"show_cart|add_item|remove_item|confirm_cart|unclear","targetIndex":null,"target":null,"targetType":"line|product|brand|position|null","hasItemDetails":false}. Understand natural language in Spanish or English. Use remove_item only when removal is requested; include line number in targetIndex or product/brand/position in target and identify targetType. Use add_item when they want another product. Use show_cart when they ask to see/review the order. Use confirm_cart only when they confirm the displayed cart is correct.',
+      messages: [{
+        role: 'user',
+        content: `State: ${state}\nLanguage: ${session.language || 'es'}\nCart: ${JSON.stringify(cart)}\nCustomer: ${text}`,
+      }],
+    });
+    const raw = response.content?.[0]?.text || '';
+    const jsonMatch = raw.match(/\{[\s\S]*?\}/);
+    const parsed = JSON.parse(jsonMatch?.[0] || '{}');
+    const allowed = new Set(['show_cart', 'add_item', 'remove_item', 'confirm_cart', 'unclear']);
+    const result = {
+      action: allowed.has(parsed.action) ? parsed.action : 'unclear',
+      targetIndex: Number.isInteger(parsed.targetIndex) ? parsed.targetIndex : null,
+      target: typeof parsed.target === 'string' ? parsed.target : null,
+      targetType: ['line', 'product', 'brand', 'position'].includes(parsed.targetType) ? parsed.targetType : null,
+      hasItemDetails: parsed.hasItemDetails === true,
+    };
+    console.log(`[CART CLASSIFIER] state=${state} result=${JSON.stringify(result)} raw=${JSON.stringify(raw)}`);
+    return result;
+  } catch (err) {
+    console.error('Cart classification error:', err.message);
+    return { action: 'unclear', targetIndex: null, target: null, targetType: null, hasItemDetails: false };
+  }
 }
 
 function cartActionQuestion(text='', session=null) {
@@ -1170,6 +1221,7 @@ ESTILO:
 - Steer, traction, trailer y all position son posiciones independientes. Antes de pedir modalidad, cotizar o confirmar, debe existir una selección propia para CADA posición consultada. "All position" NUNCA significa trailer.
 - Un pedido puede contener múltiples líneas con diferentes tamaños, posiciones y marcas, incluso dos productos distintos de la misma posición. Conserva cada combinación seleccionada con su propia cantidad; nunca reemplaces una línea anterior solo porque comparte posición o tamaño.
 - Después de completar una línea, pregunta si quiere agregar algo más o ver su pedido. Al mostrar el carrito, permite agregar o quitar líneas. Solo cuando el cliente confirme que el carrito está correcto pregunta por monte, delivery o pickup y genera la cotización.
+- Las respuestas del flujo de carrito se clasifican por intención con IA (mostrar, agregar, quitar, confirmar o aclarar). No mantengas listas de sinónimos para esas acciones; el código determinista solo valida y ejecuta la acción estructurada.
 - Si el cliente descarta una posición (por ejemplo, consiguió las steer más baratas en otro lugar), márcala como descartada: no vuelvas a pedir una elección para esa posición y no la incluyas en la cotización. Continúa únicamente con las posiciones que sí comprará.
 - No adivines cambios ambiguos del carrito. Para agregar o quitar productos, el cliente debe identificar claramente la línea, marca, producto o posición. Si no está claro, pide que lo especifique.
 - Cuando haya una posición pendiente y el cliente rechace todas sus opciones con lenguaje natural, el clasificador de intención puede marcar esa posición como descartada. Si la intención no es clara, no cambies el carrito.
@@ -1327,15 +1379,17 @@ async function handleMessage(userId, incomingText, platform) {
     }
   }
 
-  const wantsCartReview = /mu[eé]strame|mostrar?|ver (?:el |mi )?(?:pedido|carrito)|revisar? (?:el |mi )?(?:pedido|carrito)|eso es todo|nada m[aá]s|no necesito m[aá]s|show (?:my |the )?(?:order|cart)|checkout|that's all|nothing else/i.test(text);
-  const wantsCartAddition = /agrega|agregar|añade|añadir|algo m[aá]s|otra llanta|otras llantas|add|another tire|more tires/i.test(text);
-  const wantsCartRemoval = /quita|quitar|elimina|eliminar|saca|sacar|remove|delete/i.test(text);
-  const confirmsCart = /^(?:s[ií]|yes|correcto|est[aá] bien|todo correcto|as[ií] est[aá] bien|confirmo|ok|okay|dale)[.! ]*$/i.test(text);
-  const mentionsKnownBrand = KNOWN_BRANDS.some(brand => text.toLowerCase().includes(brand.toLowerCase()));
+  const cartIntent = session.awaitingCartAction || session.awaitingCartConfirmation
+    ? await classifyCartReply(
+        text,
+        session.awaitingCartConfirmation ? 'reviewing_cart' : 'choosing_next_action',
+        session
+      )
+    : null;
 
   if (session.awaitingCartAction) {
-    if (wantsCartRemoval) {
-      const removed = removeCartLine(session, text);
+    if (cartIntent.action === 'remove_item') {
+      const removed = removeCartLine(session, cartIntent);
       const reply = removed
         ? `${cartSummary(session, text)}\n\n${cartReviewQuestion(text, session)}`
         : `${cartSummary(session, text)}\n\n${isEnglishMessage(text, session) ? 'Tell me which line number or brand you want to remove.' : 'Dime qué número de línea o marca quieres quitar.'}`;
@@ -1345,7 +1399,7 @@ async function handleMessage(userId, incomingText, platform) {
       if (session.history.length > 6) session.history = session.history.slice(-6);
       return reply;
     }
-    if (wantsCartReview) {
+    if (cartIntent.action === 'show_cart') {
       session.awaitingCartAction = false;
       session.awaitingCartConfirmation = true;
       const reply = `${cartSummary(session, text)}\n\n${cartReviewQuestion(text, session)}`;
@@ -1353,7 +1407,7 @@ async function handleMessage(userId, incomingText, platform) {
       if (session.history.length > 6) session.history = session.history.slice(-6);
       return reply;
     }
-    if (wantsCartAddition && !extractTireSize(text) && !normalizePosition(text) && !mentionsKnownBrand) {
+    if (cartIntent.action === 'add_item' && !cartIntent.hasItemDetails) {
       session.awaitingCartAction = false;
       const reply = isEnglishMessage(text, session)
         ? 'What tire size or position would you like to add?'
@@ -1362,7 +1416,7 @@ async function handleMessage(userId, incomingText, platform) {
       if (session.history.length > 6) session.history = session.history.slice(-6);
       return reply;
     }
-    if (!extractTireSize(text) && !normalizePosition(text) && !mentionsKnownBrand) {
+    if (cartIntent.action !== 'add_item') {
       const reply = cartActionQuestion(text, session);
       session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
       if (session.history.length > 6) session.history = session.history.slice(-6);
@@ -1372,8 +1426,8 @@ async function handleMessage(userId, incomingText, platform) {
   }
 
   if (session.awaitingCartConfirmation) {
-    if (wantsCartRemoval) {
-      const removed = removeCartLine(session, text);
+    if (cartIntent.action === 'remove_item') {
+      const removed = removeCartLine(session, cartIntent);
       const reply = removed
         ? `${cartSummary(session, text)}\n\n${cartReviewQuestion(text, session)}`
         : `${cartSummary(session, text)}\n\n${isEnglishMessage(text, session) ? 'Tell me which line number or brand you want to remove.' : 'Dime qué número de línea o marca quieres quitar.'}`;
@@ -1381,7 +1435,7 @@ async function handleMessage(userId, incomingText, platform) {
       if (session.history.length > 6) session.history = session.history.slice(-6);
       return reply;
     }
-    if (confirmsCart) {
+    if (cartIntent.action === 'confirm_cart') {
       if (!(session.cartLines || []).some(line => line.tire && line.qty)) {
         session.awaitingCartConfirmation = false;
         const reply = isEnglishMessage(text, session)
@@ -1400,7 +1454,7 @@ async function handleMessage(userId, incomingText, platform) {
       if (session.history.length > 6) session.history = session.history.slice(-6);
       return reply;
     }
-    if (wantsCartAddition && !extractTireSize(text) && !normalizePosition(text) && !mentionsKnownBrand) {
+    if (cartIntent.action === 'add_item' && !cartIntent.hasItemDetails) {
       session.awaitingCartConfirmation = false;
       const reply = isEnglishMessage(text, session)
         ? 'What tire size or position would you like to add?'
@@ -1409,7 +1463,7 @@ async function handleMessage(userId, incomingText, platform) {
       if (session.history.length > 6) session.history = session.history.slice(-6);
       return reply;
     }
-    if (!extractTireSize(text) && !normalizePosition(text) && !mentionsKnownBrand) {
+    if (cartIntent.action === 'show_cart' || cartIntent.action === 'unclear') {
       const reply = `${cartSummary(session, text)}\n\n${cartReviewQuestion(text, session)}`;
       session.history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
       if (session.history.length > 6) session.history = session.history.slice(-6);
