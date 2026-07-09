@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-07-08-ai-cart-intents-v38';
+const BOT_VERSION = '2026-07-09-ai-radial-position-v39';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -932,6 +932,33 @@ async function classifyPendingPositionReply(text, position, language='es') {
   }
 }
 
+async function classifyPositionReply(text, language='es') {
+  const rawText = String(text || '').trim();
+  if (!rawText) return null;
+  try {
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 60,
+      temperature: 0,
+      system: 'Classify the requested tire position. Return JSON only: {"position":"steer|traction|trailer|all position|unclear"}. In Spanish, "direccional", "delantera", "del frente" and similar mean steer. "tracción", "trasera", "drive" and similar mean traction. "remolque" means trailer. "toda posición", "all position" and similar mean all position. Do not infer a position from quantity, size, brand, or the word radial/radiales.',
+      messages: [{
+        role: 'user',
+        content: `Language: ${language}\nCustomer reply: ${rawText}`,
+      }],
+    });
+    const raw = msg.content?.[0]?.text || '{}';
+    const parsed = JSON.parse(raw);
+    const position = ['steer', 'traction', 'trailer', 'all position'].includes(parsed.position)
+      ? parsed.position
+      : null;
+    console.log(`[POSITION CLASSIFIER] position=${position || 'unclear'} raw=${JSON.stringify(raw)}`);
+    return position;
+  } catch (err) {
+    console.error('Position classification error:', err.message);
+    return null;
+  }
+}
+
 function isActiveWooSale(tire, now=Date.now()) {
   if (!tire?.onSale || !tire.salePrice) return false;
   const from = tire.saleFrom ? Date.parse(tire.saleFrom) : null;
@@ -1642,7 +1669,10 @@ async function handleMessage(userId, incomingText, platform) {
   // ── Detect tire search params ─────────────────────────────────────────────
   const newSize = extractTireSize(text);
   const sizeMatch = newSize ? [newSize] : null;
-  const explicitPos = normalizePosition(text);
+  let explicitPos = normalizePosition(text);
+  if (!explicitPos && session.awaitingRadialPosition) {
+    explicitPos = await classifyPositionReply(text, session.language || 'es');
+  }
   const radialQtyMatch = text.match(/\b([1-9][0-9]?)\s+(?:llantas?\s+|gomas?\s+|tires?\s+)?radiales?\b/i);
 
   if (radialQtyMatch && !explicitPos) {
