@@ -5,7 +5,7 @@ const fs        = require('fs');
 const { google } = require('googleapis');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const BOT_VERSION = '2026-07-08-ai-pending-decline-v35';
+const BOT_VERSION = '2026-07-08-robust-ai-decline-v36';
 console.log(`[BOT VERSION] ${BOT_VERSION}`);
 
 // ── Business rules ──────────────────────────────────────────────────────────
@@ -861,15 +861,20 @@ async function classifyPendingPositionReply(text, position, language='es') {
   try {
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 40,
-      system: 'Classify a customer reply about a pending tire position. Return only JSON: {"action":"decline"} when they clearly reject all options for that position, otherwise {"action":"unclear"}. Do not infer additions, selections, quantities, or other actions.',
+      max_tokens: 60,
+      temperature: 0,
+      system: 'Classify a customer reply about tire options for one pending position. Return {"action":"decline"} when the customer clearly wants none of those options or rejects that position. Replies equivalent to "ninguna", "ninguno", "none", or "neither" are clear rejections. Otherwise return {"action":"unclear"}. Return JSON only. Do not infer additions, selections, quantities, or other actions.',
       messages: [{
         role: 'user',
         content: `Language: ${language}\nPending position: ${position || 'unknown'}\nCustomer reply: ${text}`,
       }],
     });
-    const parsed = JSON.parse(response.content?.[0]?.text || '{}');
-    return parsed.action === 'decline' ? 'decline' : 'unclear';
+    const raw = response.content?.[0]?.text || '';
+    const jsonMatch = raw.match(/\{[\s\S]*?\}/);
+    const parsed = JSON.parse(jsonMatch?.[0] || '{}');
+    const action = parsed.action === 'decline' ? 'decline' : 'unclear';
+    console.log(`[PENDING POSITION CLASSIFIER] position=${position || 'unknown'} action=${action} raw=${JSON.stringify(raw)}`);
+    return action;
   } catch (err) {
     console.error('Pending position classification error:', err.message);
     return 'unclear';
